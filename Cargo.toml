@@ -1,5 +1,5 @@
 [package]
-name = "antilope"
+name = "antelope"
 version = "0.1.0"
 authors = ["SamHSmith <13868670+SamHSmith@users.noreply.github.com>"]
 edition = "2018"
@@ -9,3 +9,5 @@ edition = "2018"
 [dependencies]
 vulkano = "0.16.0"
 image = "0.21"
+glfw = "0.34.0"
+log = "0.4.8"

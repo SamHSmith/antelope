@@ -1,6 +1,8 @@
 <component name="ProjectDictionaryState">
   <dictionary name="sam">
     <words>
+      <w>fullscreen</w>
+      <w>glfw</w>
       <w>vulkan</w>
     </words>
   </dictionary>
