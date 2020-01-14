@@ -1,3 +1,9 @@
+#[derive(Default, Debug, Clone)]
+pub struct Vertex{
+	pub position: [f32; 2]
+}
+
+
 #[cfg(test)]
 mod tests {
     use vulkano::instance::{InstanceExtensions};
@@ -203,14 +209,12 @@ mod tests {
 
         // We now create a buffer that will store the shape of our triangle.
         let vertex_buffer = {
-            #[derive(Default, Debug, Clone)]
-            struct Vertex { position: [f32; 2] }
-            vulkano::impl_vertex!(Vertex, position);
+            vulkano::impl_vertex!(crate::Vertex, position);
 
             CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), [
-                Vertex { position: [-0.5, -0.25] },
-                Vertex { position: [0.0, 0.5] },
-                Vertex { position: [0.25, -0.1] }
+                crate::Vertex { position: [-0.5, -0.25] },
+                crate::Vertex { position: [0.0, 0.5] },
+                crate::Vertex { position: [0.25, -0.1] }
             ].iter().cloned()).unwrap()
         };
 
