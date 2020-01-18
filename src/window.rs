@@ -1,6 +1,8 @@
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
-use vulkano::device::{Device, DeviceExtensions};
+use vulkano::command_buffer::{
+    AutoCommandBuffer, AutoCommandBufferBuilder, CommandBufferExecFuture, DynamicState,
+};
+use vulkano::device::{Device, DeviceExtensions, Queue};
 use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass};
 use vulkano::image::SwapchainImage;
 use vulkano::instance::{Instance, PhysicalDevice};
@@ -8,10 +10,11 @@ use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::GraphicsPipeline;
 use vulkano::swapchain;
 use vulkano::swapchain::{
-    AcquireError, ColorSpace, PresentMode, SurfaceTransform, Swapchain, SwapchainCreationError,
+    AcquireError, ColorSpace, PresentMode, SurfaceTransform, Swapchain, SwapchainAcquireFuture,
+    SwapchainCreationError,
 };
 use vulkano::sync;
-use vulkano::sync::{FlushError, GpuFuture};
+use vulkano::sync::{FlushError, GpuFuture, JoinFuture};
 
 use vulkano_win::VkSurfaceBuild;
 
@@ -19,7 +22,7 @@ use winit::{Event, EventsLoop, Window, WindowBuilder, WindowEvent};
 
 use std::sync::Arc;
 
-pub fn Loop() {
+pub fn main_loop() {
     // The first step of any Vulkan program is to create an instance.
     let instance = {
         // When we create an instance, we have to pass a list of extensions that we want to enable.
@@ -442,10 +445,7 @@ void main() {
                 .build()
                 .unwrap();
 
-        let future = previous_frame_end
-            .join(acquire_future)
-            .then_execute(queue.clone(), command_buffer)
-            .unwrap()
+        let future = render(previous_frame_end, acquire_future, &queue, command_buffer)
             // The color output is now expected to contain our triangle. But in order to show it on
             // the screen, we have to *present* the image by calling `present`.
             //
@@ -512,13 +512,33 @@ fn window_size_dependent_setup(
         dimensions: [dimensions[0] as f32, dimensions[1] as f32],
         depth_range: 0.0..1.0,
     };
-    dynamic_state.viewports = Some(vec!(viewport));
+    dynamic_state.viewports = Some(vec![viewport]);
 
-    images.iter().map(|image| {
-        Arc::new(
-            Framebuffer::start(render_pass.clone())
-                .add(image.clone()).unwrap()
-                .build().unwrap()
-        ) as Arc<dyn FramebufferAbstract + Send + Sync>
-    }).collect::<Vec<_>>()
+    images
+        .iter()
+        .map(|image| {
+            Arc::new(
+                Framebuffer::start(render_pass.clone())
+                    .add(image.clone())
+                    .unwrap()
+                    .build()
+                    .unwrap(),
+            ) as Arc<dyn FramebufferAbstract + Send + Sync>
+        })
+        .collect::<Vec<_>>()
+}
+
+fn render(
+    previous_frame_end: Box<dyn GpuFuture>,
+    acquire_future: SwapchainAcquireFuture<winit::Window>,
+    queue: &Arc<Queue>,
+    command_buffer: AutoCommandBuffer,
+) -> CommandBufferExecFuture<
+    JoinFuture<Box<dyn GpuFuture>, SwapchainAcquireFuture<winit::Window>>,
+    AutoCommandBuffer,
+> {
+    previous_frame_end
+        .join(acquire_future)
+        .then_execute(queue.clone(), command_buffer)
+        .unwrap()
 }
