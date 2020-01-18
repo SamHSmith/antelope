@@ -3,11 +3,13 @@ use vulkano::command_buffer::{
     AutoCommandBuffer, AutoCommandBufferBuilder, CommandBufferExecFuture, DynamicState,
 };
 use vulkano::device::{Device, DeviceExtensions, Queue};
-use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass};
+use vulkano::framebuffer::{
+    Framebuffer, FramebufferAbstract, RenderPass, RenderPassAbstract, Subpass,
+};
 use vulkano::image::SwapchainImage;
 use vulkano::instance::{Instance, PhysicalDevice};
 use vulkano::pipeline::viewport::Viewport;
-use vulkano::pipeline::GraphicsPipeline;
+use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 use vulkano::swapchain;
 use vulkano::swapchain::{
     AcquireError, ColorSpace, PresentMode, SurfaceTransform, Swapchain, SwapchainAcquireFuture,
@@ -20,7 +22,9 @@ use vulkano_win::VkSurfaceBuild;
 
 use winit::{Event, EventsLoop, Window, WindowBuilder, WindowEvent};
 
+use crate::Vertex;
 use std::sync::Arc;
+use vulkano::pipeline::vertex::SingleBufferDefinition;
 
 pub fn main_loop() {
     // The first step of any Vulkan program is to create an instance.
@@ -288,7 +292,7 @@ void main() {
             // We need to indicate the layout of the vertices.
             // The type `SingleBufferDefinition` actually contains a template parameter corresponding
             // to the type of each vertex. But in this code it is automatically inferred.
-            .vertex_input_single_buffer()
+            .vertex_input_single_buffer::<Vertex>()
             // A Vulkan shader can in theory contain multiple entry points, so we have to specify
             // which one. The `main` word of `main_entry_point` actually corresponds to the name of
             // the entry point.
@@ -400,60 +404,23 @@ void main() {
                 Err(err) => panic!("{:?}", err),
             };
 
-        // Specify the color to clear the framebuffer with i.e. blue
-        let clear_values = vec![[0.0, 0.0, 1.0, 1.0].into()];
-
-        // In order to draw, we have to build a *command buffer*. The command buffer object holds
-        // the list of commands that are going to be executed.
+        let future = render(
+            previous_frame_end,
+            acquire_future,
+            &queue,
+            &device,
+            &framebuffers[image_num],
+            pipeline.clone(),
+            &mut dynamic_state,
+        )
+        // The color output is now expected to contain our triangle. But in order to show it on
+        // the screen, we have to *present* the image by calling `present`.
         //
-        // Building a command buffer is an expensive operation (usually a few hundred
-        // microseconds), but it is known to be a hot path in the driver and is expected to be
-        // optimized.
-        //
-        // Note that we have to pass a queue family when we create the command buffer. The command
-        // buffer will only be executable on that given queue family.
-        let command_buffer =
-            AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
-                .unwrap()
-                // Before we can draw, we have to *enter a render pass*. There are two methods to do
-                // this: `draw_inline` and `draw_secondary`. The latter is a bit more advanced and is
-                // not covered here.
-                //
-                // The third parameter builds the list of values to clear the attachments with. The API
-                // is similar to the list of attachments when building the framebuffers, except that
-                // only the attachments that use `load: Clear` appear in the list.
-                .begin_render_pass(framebuffers[image_num].clone(), false, clear_values)
-                .unwrap()
-                // We are now inside the first subpass of the render pass. We add a draw command.
-                //
-                // The last two parameters contain the list of resources to pass to the shaders.
-                // Since we used an `EmptyPipeline` object, the objects have to be `()`.
-                .draw(
-                    pipeline.clone(),
-                    &dynamic_state,
-                    vertex_buffer.clone(),
-                    (),
-                    (),
-                )
-                .unwrap()
-                // We leave the render pass by calling `draw_end`. Note that if we had multiple
-                // subpasses we could have called `next_inline` (or `next_secondary`) to jump to the
-                // next subpass.
-                .end_render_pass()
-                .unwrap()
-                // Finish building the command buffer by calling `build`.
-                .build()
-                .unwrap();
-
-        let future = render(previous_frame_end, acquire_future, &queue, command_buffer)
-            // The color output is now expected to contain our triangle. But in order to show it on
-            // the screen, we have to *present* the image by calling `present`.
-            //
-            // This function does not actually present the image immediately. Instead it submits a
-            // present command at the end of the queue. This means that it will only be presented once
-            // the GPU has finished executing the command buffer that draws the triangle.
-            .then_swapchain_present(queue.clone(), swapchain.clone(), image_num)
-            .then_signal_fence_and_flush();
+        // This function does not actually present the image immediately. Instead it submits a
+        // present command at the end of the queue. This means that it will only be presented once
+        // the GPU has finished executing the command buffer that draws the triangle.
+        .then_swapchain_present(queue.clone(), swapchain.clone(), image_num)
+        .then_signal_fence_and_flush();
 
         match future {
             Ok(future) => {
@@ -532,11 +499,75 @@ fn render(
     previous_frame_end: Box<dyn GpuFuture>,
     acquire_future: SwapchainAcquireFuture<winit::Window>,
     queue: &Arc<Queue>,
-    command_buffer: AutoCommandBuffer,
+    device: &Arc<Device>,
+    framebuffer: &Arc<dyn FramebufferAbstract + Send + Sync>,
+    pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
+    dynamic_state: &mut DynamicState,
 ) -> CommandBufferExecFuture<
     JoinFuture<Box<dyn GpuFuture>, SwapchainAcquireFuture<winit::Window>>,
     AutoCommandBuffer,
 > {
+    // We now create a buffer that will store the shape of our triangle.
+    let vertex_buffer = {
+        CpuAccessibleBuffer::from_iter(
+            device.clone(),
+            BufferUsage::all(),
+            [
+                crate::Vertex {
+                    position: [-0.5, -0.25],
+                },
+                crate::Vertex {
+                    position: [0.0, 0.5],
+                },
+                crate::Vertex {
+                    position: [0.25, -0.1],
+                },
+            ]
+            .iter()
+            .cloned(),
+        )
+        .unwrap()
+    };
+
+    // Specify the color to clear the framebuffer with i.e. blue
+    let clear_values = vec![[0.0, 0.0, 1.0, 1.0].into()];
+
+    // In order to draw, we have to build a *command buffer*. The command buffer object holds
+    // the list of commands that are going to be executed.
+    //
+    // Building a command buffer is an expensive operation (usually a few hundred
+    // microseconds), but it is known to be a hot path in the driver and is expected to be
+    // optimized.
+    //
+    // Note that we have to pass a queue family when we create the command buffer. The command
+    // buffer will only be executable on that given queue family.
+    let command_buffer =
+        AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
+            .unwrap()
+            // Before we can draw, we have to *enter a render pass*. There are two methods to do
+            // this: `draw_inline` and `draw_secondary`. The latter is a bit more advanced and is
+            // not covered here.
+            //
+            // The third parameter builds the list of values to clear the attachments with. The API
+            // is similar to the list of attachments when building the framebuffers, except that
+            // only the attachments that use `load: Clear` appear in the list.
+            .begin_render_pass(framebuffer.clone(), false, clear_values)
+            .unwrap()
+            // We are now inside the first subpass of the render pass. We add a draw command.
+            //
+            // The last two parameters contain the list of resources to pass to the shaders.
+            // Since we used an `EmptyPipeline` object, the objects have to be `()`.
+            .draw(pipeline, dynamic_state, vec![vertex_buffer], (), ())
+            .unwrap()
+            // We leave the render pass by calling `draw_end`. Note that if we had multiple
+            // subpasses we could have called `next_inline` (or `next_secondary`) to jump to the
+            // next subpass.
+            .end_render_pass()
+            .unwrap()
+            // Finish building the command buffer by calling `build`.
+            .build()
+            .unwrap();
+
     previous_frame_end
         .join(acquire_future)
         .then_execute(queue.clone(), command_buffer)
