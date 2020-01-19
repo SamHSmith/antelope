@@ -83,23 +83,8 @@ mod tests {
     use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
     use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
     use vulkano::device::{Device, DeviceExtensions};
-    use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass};
-    use vulkano::image::SwapchainImage;
     use vulkano::instance::{Instance, PhysicalDevice};
-    use vulkano::pipeline::viewport::Viewport;
-    use vulkano::pipeline::GraphicsPipeline;
-    use vulkano::swapchain;
-    use vulkano::swapchain::{
-        AcquireError, ColorSpace, PresentMode, SurfaceTransform, Swapchain, SwapchainCreationError,
-    };
-    use vulkano::sync;
-    use vulkano::sync::{FlushError, GpuFuture};
-
-    use vulkano_win::VkSurfaceBuild;
-
-    use winit::{Event, EventsLoop, Window, WindowBuilder, WindowEvent};
-
-    use std::sync::Arc;
+    use vulkano::sync::GpuFuture;
 
     #[test]
     fn triangle() {
