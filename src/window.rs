@@ -351,30 +351,7 @@ void main() {
     // that, we store the submission of the previous frame here.
     let mut previous_frame_end = Box::new(sync::now(device.clone())) as Box<dyn GpuFuture>;
 
-    let vertex_buffer = {
-        CpuAccessibleBuffer::<[Vertex]>::from_iter(
-            device.clone(),
-            BufferUsage::all(),
-            [
-                crate::Vertex {
-                    position: [-0.5, -0.25],
-                },
-                crate::Vertex {
-                    position: [0.0, 0.5],
-                },
-                crate::Vertex {
-                    position: [0.25, -0.1],
-                },
-            ]
-            .iter()
-            .cloned(),
-        )
-        .unwrap()
-    };
-
-    let mut tri = TriangleRenderer { vertex_buffer };
-
-    tri.setup(&device);
+    let mut tri = TriangleRenderer::setup(&device);
 
     loop {
         // It is important to call this function from time to time, otherwise resources will keep
@@ -536,7 +513,7 @@ pub trait Render<F> {
     where
         F: GpuFuture;
 
-    fn setup(&mut self, device: &Arc<Device>);
+    fn setup(device: &Arc<Device>) -> Self;
 }
 
 struct TriangleRenderer {
@@ -617,5 +594,27 @@ impl
             .unwrap()
     }
 
-    fn setup(&mut self, device: &Arc<Device>) {}
+    fn setup(device: &Arc<Device>) -> Self {
+        let vertex_buffer = {
+            CpuAccessibleBuffer::<[Vertex]>::from_iter(
+                device.clone(),
+                BufferUsage::all(),
+                [
+                    crate::Vertex {
+                        position: [-0.5, -0.25],
+                    },
+                    crate::Vertex {
+                        position: [0.0, 0.5],
+                    },
+                    crate::Vertex {
+                        position: [0.25, -0.1],
+                    },
+                ]
+                .iter()
+                .cloned(),
+            )
+            .unwrap()
+        };
+        TriangleRenderer { vertex_buffer }
+    }
 }
