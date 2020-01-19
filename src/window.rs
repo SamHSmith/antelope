@@ -187,148 +187,11 @@ pub fn main_loop() {
         .unwrap()
     };
 
-    // We now create a buffer that will store the shape of our triangle.
-    let vertex_buffer = {
-        vulkano::impl_vertex!(crate::Vertex, position);
-
-        CpuAccessibleBuffer::from_iter(
-            device.clone(),
-            BufferUsage::all(),
-            [
-                crate::Vertex {
-                    position: [-0.5, -0.25],
-                },
-                crate::Vertex {
-                    position: [0.0, 0.5],
-                },
-                crate::Vertex {
-                    position: [0.25, -0.1],
-                },
-            ]
-            .iter()
-            .cloned(),
-        )
-        .unwrap()
-    };
-
-    // The next step is to create the shaders.
-    //
-    // The raw shader creation API provided by the vulkano library is unsafe, for various reasons.
-    //
-    // An overview of what the `vulkano_shaders::shader!` macro generates can be found in the
-    // `vulkano-shaders` crate docs. You can view them at https://docs.rs/vulkano-shaders/
-    //
-    // TODO: explain this in details
-    mod vs {
-        vulkano_shaders::shader! {
-            ty: "vertex",
-            src: "
-#version 450
-layout(location = 0) in vec2 position;
-void main() {
-    gl_Position = vec4(position, 0.0, 1.0);
-}"
-        }
-    }
-
-    mod fs {
-        vulkano_shaders::shader! {
-            ty: "fragment",
-            src: "
-#version 450
-layout(location = 0) out vec4 f_color;
-void main() {
-    f_color = vec4(1.0, 0.0, 0.0, 1.0);
-}
-"
-        }
-    }
-
-    let vs = vs::Shader::load(device.clone()).unwrap();
-    let fs = fs::Shader::load(device.clone()).unwrap();
-
-    // At this point, OpenGL initialization would be finished. However in Vulkan it is not. OpenGL
-    // implicitly does a lot of computation whenever you draw. In Vulkan, you have to do all this
-    // manually.
-
-    // The next step is to create a *render pass*, which is an object that describes where the
-    // output of the graphics pipeline will go. It describes the layout of the images
-    // where the colors, depth and/or stencil information will be written.
-    let render_pass = Arc::new(
-        vulkano::single_pass_renderpass!(
-            device.clone(),
-            attachments: {
-                // `color` is a custom name we give to the first and only attachment.
-                color: {
-                    // `load: Clear` means that we ask the GPU to clear the content of this
-                    // attachment at the start of the drawing.
-                    load: Clear,
-                    // `store: Store` means that we ask the GPU to store the output of the draw
-                    // in the actual image. We could also ask it to discard the result.
-                    store: Store,
-                    // `format: <ty>` indicates the type of the format of the image. This has to
-                    // be one of the types of the `vulkano::format` module (or alternatively one
-                    // of your structs that implements the `FormatDesc` trait). Here we use the
-                    // same format as the swapchain.
-                    format: swapchain.format(),
-                    // TODO:
-                    samples: 1,
-                }
-            },
-            pass: {
-                // We use the attachment named `color` as the one and only color attachment.
-                color: [color],
-                // No depth-stencil attachment is indicated with empty brackets.
-                depth_stencil: {}
-            }
-        )
-        .unwrap(),
-    );
-
-    // Before we draw we have to create what is called a pipeline. This is similar to an OpenGL
-    // program, but much more specific.
-    let pipeline = Arc::new(
-        GraphicsPipeline::start()
-            // We need to indicate the layout of the vertices.
-            // The type `SingleBufferDefinition` actually contains a template parameter corresponding
-            // to the type of each vertex. But in this code it is automatically inferred.
-            .vertex_input_single_buffer::<Vertex>()
-            // A Vulkan shader can in theory contain multiple entry points, so we have to specify
-            // which one. The `main` word of `main_entry_point` actually corresponds to the name of
-            // the entry point.
-            .vertex_shader(vs.main_entry_point(), ())
-            // The content of the vertex buffer describes a list of triangles.
-            .triangle_list()
-            // Use a resizable viewport set to draw over the entire window
-            .viewports_dynamic_scissors_irrelevant(1)
-            // See `vertex_shader`.
-            .fragment_shader(fs.main_entry_point(), ())
-            // We have to indicate which subpass of which render pass this pipeline is going to be used
-            // in. The pipeline will only be usable from this particular subpass.
-            .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
-            // Now that our builder is filled, we call `build()` to obtain an actual pipeline.
-            .build(device.clone())
-            .unwrap(),
-    );
-
-    // Dynamic viewports allow us to recreate just the viewport when the window is resized
-    // Otherwise we would have to recreate the whole pipeline.
-    let mut dynamic_state = DynamicState {
-        line_width: None,
-        viewports: None,
-        scissors: None,
-        compare_mask: None,
-        write_mask: None,
-        reference: None,
-    };
-
     // The render pass we created above only describes the layout of our framebuffers. Before we
     // can draw we also need to create the actual framebuffers.
     //
     // Since we need to draw to multiple images, we are going to create a different framebuffer for
     // each image.
-    let mut framebuffers =
-        window_size_dependent_setup(&images, render_pass.clone(), &mut dynamic_state);
 
     // Initialization is finally finished!
 
@@ -351,7 +214,9 @@ void main() {
     // that, we store the submission of the previous frame here.
     let mut previous_frame_end = Box::new(sync::now(device.clone())) as Box<dyn GpuFuture>;
 
-    let mut tri = TriangleRenderer::setup(&device);
+    let mut tri = TriangleRenderer::setup(&device, swapchain.format());
+
+    let mut framebuffers = tri.create_framebuffers(&images);
 
     loop {
         // It is important to call this function from time to time, otherwise resources will keep
@@ -383,8 +248,7 @@ void main() {
             swapchain = new_swapchain;
             // Because framebuffers contains an Arc on the old swapchain, we need to
             // recreate framebuffers as well.
-            framebuffers =
-                window_size_dependent_setup(&new_images, render_pass.clone(), &mut dynamic_state);
+            framebuffers = tri.create_framebuffers(&new_images);
 
             recreate_swapchain = false;
         }
@@ -413,8 +277,6 @@ void main() {
                 &queue,
                 &device,
                 &framebuffers[image_num],
-                pipeline.clone(),
-                &mut dynamic_state,
             )
             // The color output is now expected to contain our triangle. But in order to show it on
             // the screen, we have to *present* the image by calling `present`.
@@ -500,6 +362,12 @@ fn window_size_dependent_setup(
 
 //Where F is the GpuFuture returned by the Render Function
 pub trait Render<F> {
+    fn setup(device: &Arc<Device>, swapchain_format: vulkano::format::Format) -> Self;
+
+    fn create_framebuffers(
+        &mut self,
+        images: &[Arc<SwapchainImage<Window>>],
+    ) -> Vec<Arc<dyn FramebufferAbstract + Send + Sync>>;
     fn render(
         &mut self,
         previous_frame_end: Box<dyn GpuFuture>,
@@ -507,17 +375,16 @@ pub trait Render<F> {
         queue: &Arc<Queue>,
         device: &Arc<Device>,
         framebuffer: &Arc<dyn FramebufferAbstract + Send + Sync>,
-        pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
-        dynamic_state: &mut DynamicState,
     ) -> F
     where
         F: GpuFuture;
-
-    fn setup(device: &Arc<Device>) -> Self;
 }
 
 struct TriangleRenderer {
     vertex_buffer: Arc<CpuAccessibleBuffer<[Vertex]>>,
+    render_pass: Arc<dyn RenderPassAbstract + Sync + Send>,
+    pipeline: Arc<dyn GraphicsPipelineAbstract + Sync + Send>,
+    dynamic_state: DynamicState,
 }
 
 impl
@@ -528,6 +395,155 @@ impl
         >,
     > for TriangleRenderer
 {
+    fn setup(device: &Arc<Device>, swapchain_format: vulkano::format::Format) -> Self {
+        let vertex_buffer = {
+            CpuAccessibleBuffer::<[Vertex]>::from_iter(
+                device.clone(),
+                BufferUsage::all(),
+                [
+                    crate::Vertex {
+                        position: [-0.5, -0.25],
+                    },
+                    crate::Vertex {
+                        position: [0.0, 0.5],
+                    },
+                    crate::Vertex {
+                        position: [0.25, -0.1],
+                    },
+                ]
+                .iter()
+                .cloned(),
+            )
+            .unwrap()
+        };
+
+        let render_pass = Arc::new(
+            vulkano::single_pass_renderpass!(
+                device.clone(),
+                attachments: {
+                    // `color` is a custom name we give to the first and only attachment.
+                    color: {
+                        // `load: Clear` means that we ask the GPU to clear the content of this
+                        // attachment at the start of the drawing.
+                        load: Clear,
+                        // `store: Store` means that we ask the GPU to store the output of the draw
+                        // in the actual image. We could also ask it to discard the result.
+                        store: Store,
+                        // `format: <ty>` indicates the type of the format of the image. This has to
+                        // be one of the types of the `vulkano::format` module (or alternatively one
+                        // of your structs that implements the `FormatDesc` trait). Here we use the
+                        // same format as the swapchain.
+                        format: swapchain_format,
+                        samples: 1,
+                    }
+                },
+                pass: {
+                    // We use the attachment named `color` as the one and only color attachment.
+                    color: [color],
+                    // No depth-stencil attachment is indicated with empty brackets.
+                    depth_stencil: {}
+                }
+            )
+            .unwrap(),
+        );
+
+        vulkano::impl_vertex!(crate::Vertex, position);
+        mod vs {
+            vulkano_shaders::shader! {
+                ty: "vertex",
+                src: "
+#version 450
+layout(location = 0) in vec2 position;
+void main() {
+    gl_Position = vec4(position, 0.0, 1.0);
+}"
+            }
+        }
+
+        mod fs {
+            vulkano_shaders::shader! {
+                ty: "fragment",
+                src: "
+#version 450
+layout(location = 0) out vec4 f_color;
+void main() {
+    f_color = vec4(1.0, 0.0, 0.0, 1.0);
+}
+"
+            }
+        }
+
+        let vs = vs::Shader::load(device.clone()).unwrap();
+        let fs = fs::Shader::load(device.clone()).unwrap();
+
+        let pipeline = Arc::new(
+            GraphicsPipeline::start()
+                // We need to indicate the layout of the vertices.
+                // The type `SingleBufferDefinition` actually contains a template parameter corresponding
+                // to the type of each vertex. But in this code it is automatically inferred.
+                .vertex_input_single_buffer::<Vertex>()
+                // A Vulkan shader can in theory contain multiple entry points, so we have to specify
+                // which one. The `main` word of `main_entry_point` actually corresponds to the name of
+                // the entry point.
+                .vertex_shader(vs.main_entry_point(), ())
+                // The content of the vertex buffer describes a list of triangles.
+                .triangle_list()
+                // Use a resizable viewport set to draw over the entire window
+                .viewports_dynamic_scissors_irrelevant(1)
+                // See `vertex_shader`.
+                .fragment_shader(fs.main_entry_point(), ())
+                // We have to indicate which subpass of which render pass this pipeline is going to be used
+                // in. The pipeline will only be usable from this particular subpass.
+                .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
+                // Now that our builder is filled, we call `build()` to obtain an actual pipeline.
+                .build(device.clone())
+                .unwrap(),
+        );
+
+        let mut dynamic_state = DynamicState {
+            line_width: None,
+            viewports: None,
+            scissors: None,
+            compare_mask: None,
+            write_mask: None,
+            reference: None,
+        };
+
+        TriangleRenderer {
+            vertex_buffer,
+            render_pass,
+            pipeline,
+            dynamic_state,
+        }
+    }
+
+    fn create_framebuffers(
+        &mut self,
+        images: &[Arc<SwapchainImage<Window>>],
+    ) -> Vec<Arc<dyn FramebufferAbstract + Send + Sync>> {
+        let dimensions = images[0].dimensions();
+
+        let viewport = Viewport {
+            origin: [0.0, 0.0],
+            dimensions: [dimensions[0] as f32, dimensions[1] as f32],
+            depth_range: 0.0..1.0,
+        };
+        self.dynamic_state.viewports = Some(vec![viewport]);
+
+        images
+            .iter()
+            .map(|image| {
+                Arc::new(
+                    Framebuffer::start(self.render_pass.clone())
+                        .add(image.clone())
+                        .unwrap()
+                        .build()
+                        .unwrap(),
+                ) as Arc<dyn FramebufferAbstract + Send + Sync>
+            })
+            .collect::<Vec<_>>()
+    }
+
     fn render(
         &mut self,
         previous_frame_end: Box<dyn GpuFuture>,
@@ -535,8 +551,6 @@ impl
         queue: &Arc<Queue>,
         device: &Arc<Device>,
         framebuffer: &Arc<dyn FramebufferAbstract + Send + Sync>,
-        pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
-        dynamic_state: &mut DynamicState,
     ) -> CommandBufferExecFuture<
         JoinFuture<Box<dyn GpuFuture>, SwapchainAcquireFuture<winit::Window>>,
         AutoCommandBuffer,
@@ -572,8 +586,8 @@ impl
                 // The last two parameters contain the list of resources to pass to the shaders.
                 // Since we used an `EmptyPipeline` object, the objects have to be `()`.
                 .draw(
-                    pipeline,
-                    dynamic_state,
+                    self.pipeline.clone(),
+                    &self.dynamic_state,
                     vec![self.vertex_buffer.clone()],
                     (),
                     (),
@@ -592,29 +606,5 @@ impl
             .join(acquire_future)
             .then_execute(queue.clone(), command_buffer)
             .unwrap()
-    }
-
-    fn setup(device: &Arc<Device>) -> Self {
-        let vertex_buffer = {
-            CpuAccessibleBuffer::<[Vertex]>::from_iter(
-                device.clone(),
-                BufferUsage::all(),
-                [
-                    crate::Vertex {
-                        position: [-0.5, -0.25],
-                    },
-                    crate::Vertex {
-                        position: [0.0, 0.5],
-                    },
-                    crate::Vertex {
-                        position: [0.25, -0.1],
-                    },
-                ]
-                .iter()
-                .cloned(),
-            )
-            .unwrap()
-        };
-        TriangleRenderer { vertex_buffer }
     }
 }
