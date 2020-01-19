@@ -353,6 +353,8 @@ void main() {
 
     let mut tri = TriangleRenderer {};
 
+    tri.setup(&device);
+
     loop {
         // It is important to call this function from time to time, otherwise resources will keep
         // accumulating and you will eventually reach an out of memory error.
@@ -498,7 +500,8 @@ fn window_size_dependent_setup(
         .collect::<Vec<_>>()
 }
 
-pub trait Render {
+//Where F is the GpuFuture returned by the Render Function
+pub trait Render<F> {
     fn render(
         &mut self,
         previous_frame_end: Box<dyn GpuFuture>,
@@ -508,15 +511,25 @@ pub trait Render {
         framebuffer: &Arc<dyn FramebufferAbstract + Send + Sync>,
         pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
         dynamic_state: &mut DynamicState,
-    ) -> CommandBufferExecFuture<
-        JoinFuture<Box<dyn GpuFuture>, SwapchainAcquireFuture<winit::Window>>,
-        AutoCommandBuffer,
-    >;
+    ) -> F
+    where
+        F: GpuFuture;
+
+    fn setup(&mut self, device: &Arc<Device>);
 }
 
 struct TriangleRenderer {}
 
-impl Render for TriangleRenderer {
+impl
+    Render<
+        CommandBufferExecFuture<
+            JoinFuture<Box<dyn GpuFuture>, SwapchainAcquireFuture<winit::Window>>,
+            AutoCommandBuffer,
+        >,
+    > for TriangleRenderer
+{
+    fn setup(&mut self, device: &Arc<Device>) {}
+
     fn render(
         &mut self,
         previous_frame_end: Box<dyn GpuFuture>,
