@@ -351,7 +351,28 @@ void main() {
     // that, we store the submission of the previous frame here.
     let mut previous_frame_end = Box::new(sync::now(device.clone())) as Box<dyn GpuFuture>;
 
-    let mut tri = TriangleRenderer {};
+    let vertex_buffer = {
+        CpuAccessibleBuffer::<[Vertex]>::from_iter(
+            device.clone(),
+            BufferUsage::all(),
+            [
+                crate::Vertex {
+                    position: [-0.5, -0.25],
+                },
+                crate::Vertex {
+                    position: [0.0, 0.5],
+                },
+                crate::Vertex {
+                    position: [0.25, -0.1],
+                },
+            ]
+            .iter()
+            .cloned(),
+        )
+        .unwrap()
+    };
+
+    let mut tri = TriangleRenderer { vertex_buffer };
 
     tri.setup(&device);
 
@@ -518,7 +539,9 @@ pub trait Render<F> {
     fn setup(&mut self, device: &Arc<Device>);
 }
 
-struct TriangleRenderer {}
+struct TriangleRenderer {
+    vertex_buffer: Arc<CpuAccessibleBuffer<[Vertex]>>,
+}
 
 impl
     Render<
@@ -528,8 +551,6 @@ impl
         >,
     > for TriangleRenderer
 {
-    fn setup(&mut self, device: &Arc<Device>) {}
-
     fn render(
         &mut self,
         previous_frame_end: Box<dyn GpuFuture>,
@@ -544,26 +565,6 @@ impl
         AutoCommandBuffer,
     > {
         // We now create a buffer that will store the shape of our triangle.
-        let vertex_buffer = {
-            CpuAccessibleBuffer::from_iter(
-                device.clone(),
-                BufferUsage::all(),
-                [
-                    crate::Vertex {
-                        position: [-0.5, -0.25],
-                    },
-                    crate::Vertex {
-                        position: [0.0, 0.5],
-                    },
-                    crate::Vertex {
-                        position: [0.25, -0.1],
-                    },
-                ]
-                .iter()
-                .cloned(),
-            )
-            .unwrap()
-        };
 
         // Specify the color to clear the framebuffer with i.e. blue
         let clear_values = vec![[0.0, 0.0, 1.0, 1.0].into()];
@@ -593,7 +594,13 @@ impl
                 //
                 // The last two parameters contain the list of resources to pass to the shaders.
                 // Since we used an `EmptyPipeline` object, the objects have to be `()`.
-                .draw(pipeline, dynamic_state, vec![vertex_buffer], (), ())
+                .draw(
+                    pipeline,
+                    dynamic_state,
+                    vec![self.vertex_buffer.clone()],
+                    (),
+                    (),
+                )
                 .unwrap()
                 // We leave the render pass by calling `draw_end`. Note that if we had multiple
                 // subpasses we could have called `next_inline` (or `next_secondary`) to jump to the
@@ -609,4 +616,6 @@ impl
             .then_execute(queue.clone(), command_buffer)
             .unwrap()
     }
+
+    fn setup(&mut self, device: &Arc<Device>) {}
 }
