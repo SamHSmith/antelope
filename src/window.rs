@@ -1,18 +1,19 @@
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::command_buffer::{
-    AutoCommandBuffer, AutoCommandBufferBuilder, CommandBufferExecFuture, DynamicState,
+    AutoCommandBuffer, AutoCommandBufferBuilder, CommandBuffer, CommandBufferExecFuture,
+    DynamicState,
 };
 use vulkano::device::{Device, DeviceExtensions, Queue};
 use vulkano::framebuffer::{
     Framebuffer, FramebufferAbstract, RenderPass, RenderPassAbstract, Subpass,
 };
 use vulkano::image::SwapchainImage;
-use vulkano::instance::{Instance, PhysicalDevice};
+use vulkano::instance::{Instance, PhysicalDevice, QueueFamily};
 use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 use vulkano::swapchain;
 use vulkano::swapchain::{
-    AcquireError, ColorSpace, PresentMode, SurfaceTransform, Swapchain, SwapchainAcquireFuture,
+    AcquireError, PresentMode, SurfaceTransform, Swapchain, SwapchainAcquireFuture,
     SwapchainCreationError,
 };
 use vulkano::sync;
@@ -20,13 +21,24 @@ use vulkano::sync::{FlushError, GpuFuture, JoinFuture};
 
 use vulkano_win::VkSurfaceBuild;
 
-use winit::{Event, EventsLoop, Window, WindowBuilder, WindowEvent};
+use winit::{Event, EventsLoop, WindowBuilder, WindowEvent};
 
-use crate::Vertex;
+use crate::window::Window as OtherWindow;
+
+use std::borrow::BorrowMut;
+use std::clone::Clone;
 use std::sync::Arc;
-use vulkano::pipeline::vertex::SingleBufferDefinition;
+use std::time::Instant;
 
-pub fn main_loop() {
+#[derive(Default, Debug, Clone)]
+struct TestVertex {
+    pub position: [f32; 2],
+}
+
+pub fn main_loop<Window>()
+where
+    Window: crate::window::Window,
+{
     // The first step of any Vulkan program is to create an instance.
     let instance = {
         // When we create an instance, we have to pass a list of extensions that we want to enable.
@@ -54,6 +66,7 @@ pub fn main_loop() {
     //
     // For the sake of the example we are just going to use the first device, which should work
     // most of the time.
+    //TODO Add proper device selection
     let physical = PhysicalDevice::enumerate(&instance).next().unwrap();
     // Some little debug infos.
     println!(
@@ -123,14 +136,14 @@ pub fn main_loop() {
         physical,
         physical.supported_features(),
         &device_ext,
-        [(queue_family, 0.5)].iter().cloned(),
+        [(queue_family, 0.5)].iter().cloned(), //TODO add support for user selected queue families
     )
     .unwrap();
 
     // Since we can request multiple queues, the `queues` variable is in fact an iterator. In this
     // example we use only one queue, so we just retrieve the first and only element of the
     // iterator and throw it away.
-    let queue = queues.next().unwrap();
+    let queue = queues.next().unwrap(); //TODO add support for multiple queues
 
     // Before we can draw on the surface, we have to create what is called a swapchain. Creating
     // a swapchain allocates the color buffers that will contain the image that will ultimately
@@ -180,7 +193,7 @@ pub fn main_loop() {
             &queue,
             SurfaceTransform::Identity,
             alpha,
-            PresentMode::Fifo,
+            PresentMode::Fifo, //TODO add custom present modes
             true,
             None,
         )
@@ -196,7 +209,7 @@ pub fn main_loop() {
     // Initialization is finally finished!
 
     // In some situations, the swapchain will become invalid by itself. This includes for example
-    // when the window is resized (as the images of the swapchain will no longer match the
+    // when the window is resized (as the images of the] swapchain will no longer match the
     // window's) or, on Android, when the application went to the background and goes back to the
     // foreground.
     //
@@ -214,11 +227,18 @@ pub fn main_loop() {
     // that, we store the submission of the previous frame here.
     let mut previous_frame_end = Box::new(sync::now(device.clone())) as Box<dyn GpuFuture>;
 
-    let mut tri = TriangleRenderer::setup(&device, swapchain.format());
+    let mut win = Window::setup(&device, swapchain.format(), queue_family, &queue);
 
-    let mut framebuffers = tri.create_framebuffers(&images);
+    let mut framebuffers = win.create_framebuffers(&images);
+
+    let mut totalmillies = 0.0;
+    let mut totalcounts = 0;
+    let mut last_printout = Instant::now();
 
     loop {
+        //perf
+        let framestart = Instant::now();
+
         // It is important to call this function from time to time, otherwise resources will keep
         // accumulating and you will eventually reach an out of memory error.
         // Calling this function polls various fences in order to determine what the GPU has
@@ -248,7 +268,7 @@ pub fn main_loop() {
             swapchain = new_swapchain;
             // Because framebuffers contains an Arc on the old swapchain, we need to
             // recreate framebuffers as well.
-            framebuffers = tri.create_framebuffers(&new_images);
+            framebuffers = win.create_framebuffers(&new_images);
 
             recreate_swapchain = false;
         }
@@ -270,14 +290,13 @@ pub fn main_loop() {
                 Err(err) => panic!("{:?}", err),
             };
 
-        let future = tri
-            .render(
-                previous_frame_end,
-                acquire_future,
-                &queue,
-                &device,
-                &framebuffers[image_num],
+        let future = previous_frame_end
+            .join(acquire_future)
+            .then_execute(
+                queue.clone(),
+                win.render(&device, queue_family, &framebuffers[image_num]),
             )
+            .unwrap()
             // The color output is now expected to contain our triangle. But in order to show it on
             // the screen, we have to *present* the image by calling `present`.
             //
@@ -328,86 +347,97 @@ pub fn main_loop() {
         if done {
             return;
         }
+
+        totalcounts += 1;
+        totalmillies += framestart.elapsed().as_secs_f64() / 1000.0;
+
+        if last_printout.elapsed().as_secs() >= 8 {
+            println!("Avg Frametime: {}", totalmillies / f64::from(totalcounts));
+            totalcounts = 0;
+            totalmillies = 0.0;
+            last_printout = Instant::now();
+        }
     }
 }
 
-/// This method is called once during initialization, then again whenever the window is resized
-fn window_size_dependent_setup(
-    images: &[Arc<SwapchainImage<Window>>],
-    render_pass: Arc<dyn RenderPassAbstract + Send + Sync>,
-    dynamic_state: &mut DynamicState,
-) -> Vec<Arc<dyn FramebufferAbstract + Send + Sync>> {
-    let dimensions = images[0].dimensions();
+pub trait Window {
+    type RenderReturn;
 
-    let viewport = Viewport {
-        origin: [0.0, 0.0],
-        dimensions: [dimensions[0] as f32, dimensions[1] as f32],
-        depth_range: 0.0..1.0,
-    };
-    dynamic_state.viewports = Some(vec![viewport]);
+    fn setup(
+        device: &Arc<Device>,
+        swapchain_format: vulkano::format::Format,
+        graphics_family: QueueFamily,
+        graphics_queue: &Arc<Queue>,
+    ) -> Self;
 
-    images
-        .iter()
-        .map(|image| {
-            Arc::new(
-                Framebuffer::start(render_pass.clone())
-                    .add(image.clone())
-                    .unwrap()
-                    .build()
-                    .unwrap(),
-            ) as Arc<dyn FramebufferAbstract + Send + Sync>
-        })
-        .collect::<Vec<_>>()
-}
-
-//Where F is the GpuFuture returned by the Render Function
-pub trait Render<F> {
-    fn setup(device: &Arc<Device>, swapchain_format: vulkano::format::Format) -> Self;
+    fn get_dynamic_state_ref(&mut self) -> &mut DynamicState;
+    fn get_render_pass(&mut self) -> &Arc<dyn RenderPassAbstract + Sync + Send>;
 
     fn create_framebuffers(
         &mut self,
-        images: &[Arc<SwapchainImage<Window>>],
-    ) -> Vec<Arc<dyn FramebufferAbstract + Send + Sync>>;
+        images: &[Arc<SwapchainImage<winit::Window>>],
+    ) -> Vec<Arc<dyn FramebufferAbstract + Send + Sync>> {
+        let dimensions = images[0].dimensions();
+
+        let viewport = Viewport {
+            origin: [0.0, 0.0],
+            dimensions: [dimensions[0] as f32, dimensions[1] as f32],
+            depth_range: 0.0..1.0,
+        };
+        self.get_dynamic_state_ref().viewports = Some(vec![viewport]);
+
+        images
+            .iter()
+            .map(|image| {
+                Arc::new(
+                    Framebuffer::start(self.get_render_pass().clone())
+                        .add(image.clone())
+                        .unwrap()
+                        .build()
+                        .unwrap(),
+                ) as Arc<dyn FramebufferAbstract + Send + Sync>
+            })
+            .collect::<Vec<_>>()
+    }
     fn render(
         &mut self,
-        previous_frame_end: Box<dyn GpuFuture>,
-        acquire_future: SwapchainAcquireFuture<winit::Window>,
-        queue: &Arc<Queue>,
         device: &Arc<Device>,
+        queue_family: QueueFamily,
         framebuffer: &Arc<dyn FramebufferAbstract + Send + Sync>,
-    ) -> F
-    where
-        F: GpuFuture;
+    ) -> AutoCommandBuffer;
 }
 
-struct TriangleRenderer {
-    vertex_buffer: Arc<CpuAccessibleBuffer<[Vertex]>>,
+pub struct DemoTriangleRenderer {
+    vertex_buffer: Arc<CpuAccessibleBuffer<[TestVertex]>>,
     render_pass: Arc<dyn RenderPassAbstract + Sync + Send>,
     pipeline: Arc<dyn GraphicsPipelineAbstract + Sync + Send>,
     dynamic_state: DynamicState,
 }
 
-impl
-    Render<
-        CommandBufferExecFuture<
-            JoinFuture<Box<dyn GpuFuture>, SwapchainAcquireFuture<winit::Window>>,
-            AutoCommandBuffer,
-        >,
-    > for TriangleRenderer
-{
-    fn setup(device: &Arc<Device>, swapchain_format: vulkano::format::Format) -> Self {
+impl Window for DemoTriangleRenderer {
+    type RenderReturn = CommandBufferExecFuture<
+        JoinFuture<Box<dyn GpuFuture>, SwapchainAcquireFuture<winit::Window>>,
+        AutoCommandBuffer,
+    >;
+
+    fn setup(
+        device: &Arc<Device>,
+        swapchain_format: vulkano::format::Format,
+        graphics_family: QueueFamily,
+        graphics_queue: &Arc<Queue>,
+    ) -> Self {
         let vertex_buffer = {
-            CpuAccessibleBuffer::<[Vertex]>::from_iter(
+            CpuAccessibleBuffer::<[TestVertex]>::from_iter(
                 device.clone(),
                 BufferUsage::all(),
                 [
-                    crate::Vertex {
+                    TestVertex {
                         position: [-0.5, -0.25],
                     },
-                    crate::Vertex {
+                    TestVertex {
                         position: [0.0, 0.5],
                     },
-                    crate::Vertex {
+                    TestVertex {
                         position: [0.25, -0.1],
                     },
                 ]
@@ -447,7 +477,7 @@ impl
             .unwrap(),
         );
 
-        vulkano::impl_vertex!(crate::Vertex, position);
+        vulkano::impl_vertex!(TestVertex, position);
         mod vs {
             vulkano_shaders::shader! {
                 ty: "vertex",
@@ -481,7 +511,7 @@ void main() {
                 // We need to indicate the layout of the vertices.
                 // The type `SingleBufferDefinition` actually contains a template parameter corresponding
                 // to the type of each vertex. But in this code it is automatically inferred.
-                .vertex_input_single_buffer::<Vertex>()
+                .vertex_input_single_buffer::<TestVertex>()
                 // A Vulkan shader can in theory contain multiple entry points, so we have to specify
                 // which one. The `main` word of `main_entry_point` actually corresponds to the name of
                 // the entry point.
@@ -500,7 +530,7 @@ void main() {
                 .unwrap(),
         );
 
-        let mut dynamic_state = DynamicState {
+        let dynamic_state = DynamicState {
             line_width: None,
             viewports: None,
             scissors: None,
@@ -509,52 +539,27 @@ void main() {
             reference: None,
         };
 
-        TriangleRenderer {
+        DemoTriangleRenderer {
             vertex_buffer,
             render_pass,
             pipeline,
             dynamic_state,
         }
     }
+    fn get_dynamic_state_ref(&mut self) -> &mut DynamicState {
+        self.dynamic_state.borrow_mut()
+    }
 
-    fn create_framebuffers(
-        &mut self,
-        images: &[Arc<SwapchainImage<Window>>],
-    ) -> Vec<Arc<dyn FramebufferAbstract + Send + Sync>> {
-        let dimensions = images[0].dimensions();
-
-        let viewport = Viewport {
-            origin: [0.0, 0.0],
-            dimensions: [dimensions[0] as f32, dimensions[1] as f32],
-            depth_range: 0.0..1.0,
-        };
-        self.dynamic_state.viewports = Some(vec![viewport]);
-
-        images
-            .iter()
-            .map(|image| {
-                Arc::new(
-                    Framebuffer::start(self.render_pass.clone())
-                        .add(image.clone())
-                        .unwrap()
-                        .build()
-                        .unwrap(),
-                ) as Arc<dyn FramebufferAbstract + Send + Sync>
-            })
-            .collect::<Vec<_>>()
+    fn get_render_pass(&mut self) -> &Arc<dyn RenderPassAbstract + Sync + Send> {
+        self.render_pass.borrow_mut()
     }
 
     fn render(
         &mut self,
-        previous_frame_end: Box<dyn GpuFuture>,
-        acquire_future: SwapchainAcquireFuture<winit::Window>,
-        queue: &Arc<Queue>,
         device: &Arc<Device>,
+        queue_family: QueueFamily,
         framebuffer: &Arc<dyn FramebufferAbstract + Send + Sync>,
-    ) -> CommandBufferExecFuture<
-        JoinFuture<Box<dyn GpuFuture>, SwapchainAcquireFuture<winit::Window>>,
-        AutoCommandBuffer,
-    > {
+    ) -> AutoCommandBuffer {
         // We now create a buffer that will store the shape of our triangle.
 
         // Specify the color to clear the framebuffer with i.e. blue
@@ -570,7 +575,7 @@ void main() {
         // Note that we have to pass a queue family when we create the command buffer. The command
         // buffer will only be executable on that given queue family.
         let command_buffer =
-            AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
+            AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue_family)
                 .unwrap()
                 // Before we can draw, we have to *enter a render pass*. There are two methods to do
                 // this: `draw_inline` and `draw_secondary`. The latter is a bit more advanced and is
@@ -602,9 +607,6 @@ void main() {
                 .build()
                 .unwrap();
 
-        previous_frame_end
-            .join(acquire_future)
-            .then_execute(queue.clone(), command_buffer)
-            .unwrap()
+        command_buffer
     }
 }

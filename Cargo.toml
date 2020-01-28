@@ -12,3 +12,5 @@ vulkano-win = "0.16.0"
 vulkano-shaders = "0.16.0"
 winit = "0.19"
 image = "0.21"
+[dependencies.gltf]
+version = "0.15"
