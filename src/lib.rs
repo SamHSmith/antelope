@@ -75,8 +75,10 @@ mod tests {
         image.save("test_dump/blue.png").unwrap();
     }
 
+    use crate::camera::RenderCamera;
     use crate::mesh::{Mesh, MeshCreateInfo, Vertex};
     use crate::window::{DemoTriangleRenderer, Window};
+    use cgmath::{Deg, Euler, Matrix4, Quaternion, Vector3};
     use gltf::mesh::Reader;
     use gltf::Gltf;
     use std::borrow::BorrowMut;
@@ -119,21 +121,21 @@ mod tests {
         ) -> Self {
             let verts = vec![
                 Vertex {
-                    position: [-0.5, -0.9, 0.0],
+                    position: [-0.5, -0.9, -0.5],
                     colour: [1.0, 0.0, 0.0],
                     normal: [1.0, 0.0, 0.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
                     texcoord: [0.0, 0.0],
                 },
                 Vertex {
-                    position: [0.0, 0.5, 0.0],
+                    position: [0.0, 0.5, -0.5],
                     colour: [0.0, 1.0, 0.0],
                     normal: [1.0, 0.0, 0.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
                     texcoord: [0.0, 0.0],
                 },
                 Vertex {
-                    position: [0.25, -0.1, 0.0],
+                    position: [0.25, -0.1, -0.5],
                     colour: [0.0, 0.0, 1.0],
                     normal: [1.0, 0.0, 0.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
@@ -205,8 +207,12 @@ layout(location = 1) out vec3 frag_normal;
 layout(location = 2) out vec4 frag_tangent;
 layout(location = 3) out vec2 frag_texcoord;
 
+layout(push_constant) uniform PushConstants {
+    dmat4 viewproj;
+} push_constants;
+
 void main() {
-    gl_Position = vec4(position, 1.0);
+    gl_Position = vec4(push_constants.viewproj * vec4(position, 1.0));
     
     frag_colour=colour;
     frag_normal=normal;
@@ -297,6 +303,19 @@ void main() {
             // Specify the color to clear the framebuffer with i.e. blue
             let clear_values = vec![[0.0, 0.0, 0.2, 1.0].into()];
 
+            let cam = RenderCamera {
+                position: Vector3 {
+                    x: 0.0,
+                    y: 0.9,
+                    z: 5.5,
+                },
+                rotation: Quaternion::from(Euler::new(Deg(0.0), Deg(0.0), Deg(0.0))),
+                aspect: 1.0,
+                fov: 90.0,
+                far: 10000.0,
+                near: 0.1,
+            };
+
             // In order to draw, we have to build a *command buffer*. The command buffer object holds
             // the list of commands that are going to be executed.
             //
@@ -328,7 +347,7 @@ void main() {
                         vec![self.vertex_buffer.clone()],
                         self.index_buffer.clone(),
                         (),
-                        (),
+                        (cam.to_matrix()),
                     )
                     .unwrap()
                     // We leave the render pass by calling `draw_end`. Note that if we had multiple
@@ -345,5 +364,6 @@ void main() {
     }
 }
 
+pub mod camera;
 pub mod mesh;
 pub mod window;
