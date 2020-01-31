@@ -7,7 +7,7 @@ use vulkano::device::{Device, DeviceExtensions, Queue};
 use vulkano::framebuffer::{
     Framebuffer, FramebufferAbstract, RenderPass, RenderPassAbstract, Subpass,
 };
-use vulkano::image::SwapchainImage;
+use vulkano::image::{AttachmentImage, SwapchainImage};
 use vulkano::instance::{Instance, PhysicalDevice, QueueFamily};
 use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
@@ -229,7 +229,7 @@ where
 
     let mut win = Window::setup(&device, swapchain.format(), queue_family, &queue);
 
-    let mut framebuffers = win.create_framebuffers(&images);
+    let mut framebuffers = win.create_framebuffers(&device, &images);
 
     let mut totalmillies = 0.0;
     let mut totalcounts = 0;
@@ -268,7 +268,7 @@ where
             swapchain = new_swapchain;
             // Because framebuffers contains an Arc on the old swapchain, we need to
             // recreate framebuffers as well.
-            framebuffers = win.create_framebuffers(&new_images);
+            framebuffers = win.create_framebuffers(&device, &new_images);
 
             recreate_swapchain = false;
         }
@@ -375,6 +375,7 @@ pub trait Window {
 
     fn create_framebuffers(
         &mut self,
+        device: &Arc<Device>,
         images: &[Arc<SwapchainImage<winit::Window>>],
     ) -> Vec<Arc<dyn FramebufferAbstract + Send + Sync>> {
         let dimensions = images[0].dimensions();
@@ -386,12 +387,21 @@ pub trait Window {
         };
         self.get_dynamic_state_ref().viewports = Some(vec![viewport]);
 
+        let depth_buffer = AttachmentImage::transient(
+            device.clone(),
+            dimensions,
+            vulkano::format::Format::D32Sfloat,
+        )
+        .unwrap();
+
         images
             .iter()
             .map(|image| {
                 Arc::new(
                     Framebuffer::start(self.get_render_pass().clone())
                         .add(image.clone())
+                        .unwrap()
+                        .add(depth_buffer.clone())
                         .unwrap()
                         .build()
                         .unwrap(),
@@ -563,7 +573,7 @@ void main() {
         // We now create a buffer that will store the shape of our triangle.
 
         // Specify the color to clear the framebuffer with i.e. blue
-        let clear_values = vec![[0.0, 0.0, 1.0, 1.0].into()];
+        let clear_values = vec![[0.0, 0.0, 0.2, 1.0].into(), 1f32.into()];
 
         // In order to draw, we have to build a *command buffer*. The command buffer object holds
         // the list of commands that are going to be executed.

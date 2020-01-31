@@ -141,12 +141,33 @@ mod tests {
                     tangent: [1.0, 0.0, 0.0, 1.0],
                     texcoord: [0.0, 0.0],
                 },
+                Vertex {
+                    position: [-1.5, -0.9, -0.9],
+                    colour: [1.0, 1.0, 0.0],
+                    normal: [1.0, 0.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0, 1.0],
+                    texcoord: [0.0, 0.0],
+                },
+                Vertex {
+                    position: [-1.0, 0.5, -0.9],
+                    colour: [1.0, 1.0, 0.0],
+                    normal: [1.0, 0.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0, 1.0],
+                    texcoord: [0.0, 0.0],
+                },
+                Vertex {
+                    position: [0.2, -0.1, -0.9],
+                    colour: [1.0, 1.0, 0.0],
+                    normal: [1.0, 0.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0, 1.0],
+                    texcoord: [0.0, 0.0],
+                },
             ];
 
             let (mesh, create_buff) = Mesh::create(
                 MeshCreateInfo {
                     verticies: verts,
-                    indicies: vec![0, 1, 2],
+                    indicies: vec![0, 1, 2, 3, 4, 5],
                 },
                 &device,
                 graphics_family,
@@ -178,13 +199,19 @@ mod tests {
                             // same format as the swapchain.
                             format: swapchain_format,
                             samples: 1,
+                        },
+                        depth: {
+                            load: Clear,
+                            store: DontCare,
+                            format: Format::D32Sfloat,
+                            samples: 1,
                         }
                     },
                     pass: {
                         // We use the attachment named `color` as the one and only color attachment.
                         color: [color],
                         // No depth-stencil attachment is indicated with empty brackets.
-                        depth_stencil: {}
+                        depth_stencil: {depth}
                     }
                 )
                 .unwrap(),
@@ -261,6 +288,7 @@ void main() {
                     .fragment_shader(fs.main_entry_point(), ())
                     // We have to indicate which subpass of which render pass this pipeline is going to be used
                     // in. The pipeline will only be usable from this particular subpass.
+                    .depth_stencil_simple_depth()
                     .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
                     // Now that our builder is filled, we call `build()` to obtain an actual pipeline.
                     .build(device.clone())
@@ -301,7 +329,7 @@ void main() {
             // We now create a buffer that will store the shape of our triangle.
 
             // Specify the color to clear the framebuffer with i.e. blue
-            let clear_values = vec![[0.0, 0.0, 0.2, 1.0].into()];
+            let clear_values = vec![[0.0, 0.0, 0.2, 1.0].into(), 1f32.into()];
 
             let cam = RenderCamera {
                 position: Vector3 {
