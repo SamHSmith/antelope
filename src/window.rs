@@ -475,13 +475,19 @@ impl Window for DemoTriangleRenderer {
                         // same format as the swapchain.
                         format: swapchain_format,
                         samples: 1,
+                    },
+                    depth: {
+                        load: Clear,
+                        store: DontCare,
+                        format: vulkano::format::Format::D32Sfloat,
+                        samples: 1,
                     }
                 },
                 pass: {
                     // We use the attachment named `color` as the one and only color attachment.
                     color: [color],
                     // No depth-stencil attachment is indicated with empty brackets.
-                    depth_stencil: {}
+                    depth_stencil: {depth}
                 }
             )
             .unwrap(),
