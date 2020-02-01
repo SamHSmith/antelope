@@ -3,7 +3,7 @@ mod tests {
     use vulkano::command_buffer::{AutoCommandBuffer, CommandBuffer, CommandBufferExecFuture};
     use vulkano::device::{Features, Queue};
     use vulkano::format::{ClearValue, Format};
-    use vulkano::image::{Dimensions, StorageImage};
+    use vulkano::image::{AttachmentImage, Dimensions, StorageImage, SwapchainImage};
     use vulkano::instance::{InstanceExtensions, QueueFamily};
 
     #[test]
@@ -90,6 +90,7 @@ mod tests {
     use vulkano::half::f16;
     use vulkano::instance::{Instance, PhysicalDevice};
     use vulkano::pipeline::vertex::SingleBufferDefinition;
+    use vulkano::pipeline::viewport::Viewport;
     use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
     use vulkano::swapchain::SwapchainAcquireFuture;
     use vulkano::sync::{GpuFuture, JoinFuture};
@@ -108,11 +109,6 @@ mod tests {
     }
 
     impl Window for DemoMeshRenderer {
-        type RenderReturn = CommandBufferExecFuture<
-            JoinFuture<Box<dyn GpuFuture>, SwapchainAcquireFuture<winit::Window>>,
-            AutoCommandBuffer,
-        >;
-
         fn setup(
             device: &Arc<Device>,
             swapchain_format: vulkano::format::Format,
@@ -144,14 +140,14 @@ mod tests {
                 Vertex {
                     position: [-1.5, -0.9, -0.9],
                     colour: [1.0, 1.0, 0.0],
-                    normal: [1.0, 0.0, 0.0],
+                    normal: [1.0, 1.0, 0.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
                     texcoord: [0.0, 0.0],
                 },
                 Vertex {
                     position: [-1.0, 0.5, -0.9],
                     colour: [1.0, 1.0, 0.0],
-                    normal: [1.0, 0.0, 0.0],
+                    normal: [1.0, 1.0, 0.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
                     texcoord: [0.0, 0.0],
                 },
@@ -205,11 +201,17 @@ mod tests {
                             store: DontCare,
                             format: Format::D32Sfloat,
                             samples: 1,
+                        },
+                        normals: {
+                            load: Clear,
+                            store: Store,
+                            format: Format::R16G16B16A16Sfloat,
+                            samples: 1,
                         }
                     },
                     pass: {
                         // We use the attachment named `color` as the one and only color attachment.
-                        color: [color],
+                        color: [color,normals],
                         // No depth-stencil attachment is indicated with empty brackets.
                         depth_stencil: {depth}
                     }
@@ -260,8 +262,11 @@ layout(location = 2) in vec4 tangent;
 layout(location = 3) in vec2 texcoord;
 
 layout(location = 0) out vec4 f_colour;
+layout(location = 1) out vec4 f_normal;
+
 void main() {
     f_colour = vec4(colour, 1.0);
+    f_normal = vec4(normal, 0.0);
 }
 "
                 }
@@ -312,12 +317,58 @@ void main() {
                 dynamic_state,
             }
         }
+
         fn get_dynamic_state_ref(&mut self) -> &mut DynamicState {
             self.dynamic_state.borrow_mut()
         }
-
         fn get_render_pass(&mut self) -> &Arc<dyn RenderPassAbstract + Sync + Send> {
             self.render_pass.borrow_mut()
+        }
+
+        fn create_framebuffers(
+            &mut self,
+            device: &Arc<Device>,
+            images: &[Arc<SwapchainImage<winit::Window>>],
+        ) -> Vec<Arc<dyn FramebufferAbstract + Send + Sync>> {
+            let dimensions = images[0].dimensions();
+
+            let viewport = Viewport {
+                origin: [0.0, 0.0],
+                dimensions: [dimensions[0] as f32, dimensions[1] as f32],
+                depth_range: 0.0..1.0,
+            };
+            self.get_dynamic_state_ref().viewports = Some(vec![viewport]);
+
+            let depth_buffer = AttachmentImage::transient(
+                device.clone(),
+                dimensions,
+                vulkano::format::Format::D32Sfloat,
+            )
+            .unwrap();
+
+            let normal_buffer = AttachmentImage::transient(
+                device.clone(),
+                dimensions,
+                vulkano::format::Format::R16G16B16A16Sfloat,
+            )
+            .unwrap();
+
+            images
+                .iter()
+                .map(|image| {
+                    Arc::new(
+                        vulkano::framebuffer::Framebuffer::start(self.get_render_pass().clone())
+                            .add(image.clone())
+                            .unwrap()
+                            .add(depth_buffer.clone())
+                            .unwrap()
+                            .add(normal_buffer.clone())
+                            .unwrap()
+                            .build()
+                            .unwrap(),
+                    ) as Arc<dyn FramebufferAbstract + Send + Sync>
+                })
+                .collect::<Vec<_>>()
         }
 
         fn render(
@@ -329,7 +380,11 @@ void main() {
             // We now create a buffer that will store the shape of our triangle.
 
             // Specify the color to clear the framebuffer with i.e. blue
-            let clear_values = vec![[0.0, 0.0, 0.2, 1.0].into(), 1f32.into()];
+            let clear_values = vec![
+                [0.0, 0.0, 0.2, 1.0].into(),
+                1f32.into(),
+                [0.0, 0.0, 0.0].into(),
+            ];
 
             let cam = RenderCamera {
                 position: Vector3 {

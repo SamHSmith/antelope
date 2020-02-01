@@ -1,12 +1,9 @@
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::command_buffer::{
-    AutoCommandBuffer, AutoCommandBufferBuilder, CommandBuffer, CommandBufferExecFuture,
-    DynamicState,
+    AutoCommandBuffer, AutoCommandBufferBuilder, CommandBufferExecFuture, DynamicState,
 };
 use vulkano::device::{Device, DeviceExtensions, Queue};
-use vulkano::framebuffer::{
-    Framebuffer, FramebufferAbstract, RenderPass, RenderPassAbstract, Subpass,
-};
+use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass};
 use vulkano::image::{AttachmentImage, SwapchainImage};
 use vulkano::instance::{Instance, PhysicalDevice, QueueFamily};
 use vulkano::pipeline::viewport::Viewport;
@@ -22,8 +19,6 @@ use vulkano::sync::{FlushError, GpuFuture, JoinFuture};
 use vulkano_win::VkSurfaceBuild;
 
 use winit::{Event, EventsLoop, WindowBuilder, WindowEvent};
-
-use crate::window::Window as OtherWindow;
 
 use std::borrow::BorrowMut;
 use std::clone::Clone;
@@ -361,8 +356,6 @@ where
 }
 
 pub trait Window {
-    type RenderReturn;
-
     fn setup(
         device: &Arc<Device>,
         swapchain_format: vulkano::format::Format,
@@ -425,16 +418,11 @@ pub struct DemoTriangleRenderer {
 }
 
 impl Window for DemoTriangleRenderer {
-    type RenderReturn = CommandBufferExecFuture<
-        JoinFuture<Box<dyn GpuFuture>, SwapchainAcquireFuture<winit::Window>>,
-        AutoCommandBuffer,
-    >;
-
     fn setup(
         device: &Arc<Device>,
         swapchain_format: vulkano::format::Format,
-        graphics_family: QueueFamily,
-        graphics_queue: &Arc<Queue>,
+        _graphics_family: QueueFamily,
+        _graphics_queue: &Arc<Queue>,
     ) -> Self {
         let vertex_buffer = {
             CpuAccessibleBuffer::<[TestVertex]>::from_iter(
