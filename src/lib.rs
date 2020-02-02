@@ -3,7 +3,9 @@ mod tests {
     use vulkano::command_buffer::{AutoCommandBuffer, CommandBuffer, CommandBufferExecFuture};
     use vulkano::device::{Features, Queue};
     use vulkano::format::{ClearValue, Format};
-    use vulkano::image::{AttachmentImage, Dimensions, StorageImage, SwapchainImage};
+    use vulkano::image::{
+        AttachmentImage, Dimensions, ImageLayout, ImageUsage, StorageImage, SwapchainImage,
+    };
     use vulkano::instance::{InstanceExtensions, QueueFamily};
 
     #[test]
@@ -77,13 +79,14 @@ mod tests {
 
     use crate::camera::RenderCamera;
     use crate::mesh::{Mesh, MeshCreateInfo, Vertex};
-    use crate::window::{DemoTriangleRenderer, Window};
+    use crate::window::{DemoTriangleRenderer, Frame, TriangleFrame, Window};
     use cgmath::{Deg, Euler, Matrix4, Quaternion, Vector3};
     use gltf::mesh::Reader;
     use gltf::Gltf;
     use std::borrow::BorrowMut;
     use std::sync::Arc;
     use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, DeviceLocalBuffer};
+    use vulkano::command_buffer::sys::KindOcclusionQuery::Forbidden;
     use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
     use vulkano::device::{Device, DeviceExtensions};
     use vulkano::framebuffer::{FramebufferAbstract, RenderPassAbstract, Subpass};
@@ -97,18 +100,28 @@ mod tests {
 
     #[test]
     fn triangle() {
-        crate::window::main_loop::<DemoMeshRenderer>();
+        crate::window::main_loop::<DemoTriangleRenderer, TriangleFrame>();
     }
 
     pub struct DemoMeshRenderer {
         vertex_buffer: Arc<DeviceLocalBuffer<[Vertex]>>,
         index_buffer: Arc<DeviceLocalBuffer<[u32]>>,
         render_pass: Arc<dyn RenderPassAbstract + Sync + Send>,
-        pipeline: Arc<dyn GraphicsPipelineAbstract + Sync + Send>,
+        pipeline: [Arc<dyn GraphicsPipelineAbstract + Sync + Send>; 2],
         dynamic_state: DynamicState,
     }
 
-    impl Window for DemoMeshRenderer {
+    struct MeshFrame {
+        framebuffer: Arc<dyn FramebufferAbstract + Send + Sync>,
+    }
+
+    impl Frame for MeshFrame {
+        fn get_framebuffer(&self) -> &Arc<dyn FramebufferAbstract + Send + Sync> {
+            &self.framebuffer
+        }
+    }
+
+    impl Window<MeshFrame> for DemoMeshRenderer {
         fn setup(
             device: &Arc<Device>,
             swapchain_format: vulkano::format::Format,
@@ -178,7 +191,7 @@ mod tests {
                 .unwrap();
 
             let render_pass = Arc::new(
-                vulkano::single_pass_renderpass!(
+                vulkano::ordered_passes_renderpass!(
                     device.clone(),
                     attachments: {
                         // `color` is a custom name we give to the first and only attachment.
@@ -198,8 +211,22 @@ mod tests {
                         },
                         depth: {
                             load: Clear,
-                            store: DontCare,
+                            store: Store,
                             format: Format::D32Sfloat,
+                            samples: 1,
+                        },
+                        albedo: {
+                            // `load: Clear` means that we ask the GPU to clear the content of this
+                            // attachment at the start of the drawing.
+                            load: Clear,
+                            // `store: Store` means that we ask the GPU to store the output of the draw
+                            // in the actual image. We could also ask it to discard the result.
+                            store: Store,
+                            // `format: <ty>` indicates the type of the format of the image. This has to
+                            // be one of the types of the `vulkano::format` module (or alternatively one
+                            // of your structs that implements the `FormatDesc` trait). Here we use the
+                            // same format as the swapchain.
+                            format: Format::R32G32B32A32Sfloat,
                             samples: 1,
                         },
                         normals: {
@@ -209,17 +236,28 @@ mod tests {
                             samples: 1,
                         }
                     },
-                    pass: {
+                    passes: [
+                    {
                         // We use the attachment named `color` as the one and only color attachment.
-                        color: [color,normals],
+                        color: [albedo,normals],
                         // No depth-stencil attachment is indicated with empty brackets.
-                        depth_stencil: {depth}
+                        depth_stencil: {depth},
+                        input: []
+                    },
+                    {
+                        // We use the attachment named `color` as the one and only color attachment.
+                        color: [color],
+                        // No depth-stencil attachment is indicated with empty brackets.
+                        depth_stencil: {},
+                        input: [albedo,normals]
                     }
+                    ]
                 )
                 .unwrap(),
             );
 
             vulkano::impl_vertex!(Vertex, position, colour, normal, tangent, texcoord);
+
             mod vs {
                 vulkano_shaders::shader! {
                     ty: "vertex",
@@ -300,6 +338,77 @@ void main() {
                     .unwrap(),
             );
 
+            mod vs2 {
+                vulkano_shaders::shader! {
+                    ty: "vertex",
+                    src: "
+#version 450
+
+
+layout(push_constant) uniform PushConstants {
+    ivec2 resolution;
+} push_constants;
+
+void main() {
+    vec2 verts[6];
+    verts[0]=vec2(-1.0,-1.0);
+    verts[1]=vec2(1.0,-1.0);
+    verts[2]=vec2(-1.0,1.0);
+    verts[3]=vec2(-1.0,1.0);
+    verts[4]=vec2(1.0,-1.0);
+    verts[5]=vec2(1.0,1.0);
+
+    gl_Position = vec4(verts[gl_VertexIndex],0.0,1.0);
+}"
+                }
+            }
+
+            mod fs2 {
+                vulkano_shaders::shader! {
+                    ty: "fragment",
+                    src: "
+#version 450
+
+layout(input_attachment_index = 0, set = 0, binding = 0) uniform subpassInput u_diffuse;
+layout(input_attachment_index = 1, set = 0, binding = 1) uniform subpassInput u_normal;
+
+layout(location = 0) out vec4 f_colour;
+
+void main() {
+    f_colour = vec4(subpassLoad(u_normal).xyz, 1.0);
+}
+"
+                }
+            }
+
+            let vs2 = vs2::Shader::load(device.clone()).unwrap();
+            let fs2 = fs2::Shader::load(device.clone()).unwrap();
+
+            let pipeline2 = Arc::new(
+                GraphicsPipeline::start()
+                    // We need to indicate the layout of the vertices.
+                    // The type `SingleBufferDefinition` actually contains a template parameter corresponding
+                    // to the type of each vertex. But in this code it is automatically inferred.
+                    //.vertex_input_single_buffer::<Vertex>()
+                    // A Vulkan shader can in theory contain multiple entry points, so we have to specify
+                    // which one. The `main` word of `main_entry_point` actually corresponds to the name of
+                    // the entry point.
+                    .vertex_shader(vs2.main_entry_point(), ())
+                    // The content of the vertex buffer describes a list of triangles.
+                    .triangle_list()
+                    // Use a resizable viewport set to draw over the entire window
+                    .viewports_dynamic_scissors_irrelevant(1)
+                    // See `vertex_shader`.
+                    .fragment_shader(fs2.main_entry_point(), ())
+                    // We have to indicate which subpass of which render pass this pipeline is going to be used
+                    // in. The pipeline will only be usable from this particular subpass.
+                    //.depth_stencil_simple_depth()
+                    .render_pass(Subpass::from(render_pass.clone(), 1).unwrap())
+                    // Now that our builder is filled, we call `build()` to obtain an actual pipeline.
+                    .build(device.clone())
+                    .unwrap(),
+            );
+
             let dynamic_state = DynamicState {
                 line_width: None,
                 viewports: None,
@@ -313,7 +422,7 @@ void main() {
                 vertex_buffer: mesh.vertbuff,
                 index_buffer: mesh.indbuff,
                 render_pass,
-                pipeline,
+                pipeline: [pipeline, pipeline2],
                 dynamic_state,
             }
         }
@@ -329,7 +438,7 @@ void main() {
             &mut self,
             device: &Arc<Device>,
             images: &[Arc<SwapchainImage<winit::Window>>],
-        ) -> Vec<Arc<dyn FramebufferAbstract + Send + Sync>> {
+        ) -> Vec<MeshFrame> {
             let dimensions = images[0].dimensions();
 
             let viewport = Viewport {
@@ -346,27 +455,42 @@ void main() {
             )
             .unwrap();
 
-            let normal_buffer = AttachmentImage::transient(
+            let mut usage = ImageUsage::none();
+            usage.input_attachment = true;
+            usage.transient_attachment = true;
+
+            let albedo_buffer = AttachmentImage::with_usage(
+                device.clone(),
+                dimensions,
+                vulkano::format::Format::R32G32B32A32Sfloat,
+                usage,
+            )
+            .unwrap();
+
+            let normal_buffer = AttachmentImage::with_usage(
                 device.clone(),
                 dimensions,
                 vulkano::format::Format::R16G16B16A16Sfloat,
+                usage,
             )
             .unwrap();
 
             images
                 .iter()
-                .map(|image| {
-                    Arc::new(
+                .map(|image| MeshFrame {
+                    framebuffer: Arc::new(
                         vulkano::framebuffer::Framebuffer::start(self.get_render_pass().clone())
                             .add(image.clone())
                             .unwrap()
                             .add(depth_buffer.clone())
                             .unwrap()
+                            .add(albedo_buffer.clone())
+                            .unwrap()
                             .add(normal_buffer.clone())
                             .unwrap()
                             .build()
                             .unwrap(),
-                    ) as Arc<dyn FramebufferAbstract + Send + Sync>
+                    ),
                 })
                 .collect::<Vec<_>>()
         }
@@ -375,7 +499,7 @@ void main() {
             &mut self,
             device: &Arc<Device>,
             queue_family: QueueFamily,
-            framebuffer: &Arc<dyn FramebufferAbstract + Send + Sync>,
+            framebuffer: &MeshFrame,
         ) -> AutoCommandBuffer {
             // We now create a buffer that will store the shape of our triangle.
 
@@ -383,7 +507,8 @@ void main() {
             let clear_values = vec![
                 [0.0, 0.0, 0.2, 1.0].into(),
                 1f32.into(),
-                [0.0, 0.0, 0.0].into(),
+                [0.0, 0.0, 0.0, 0.0].into(),
+                [0.0, 0.0, 0.0, 0.0].into(),
             ];
 
             let cam = RenderCamera {
@@ -418,14 +543,14 @@ void main() {
                     // The third parameter builds the list of values to clear the attachments with. The API
                     // is similar to the list of attachments when building the framebuffers, except that
                     // only the attachments that use `load: Clear` appear in the list.
-                    .begin_render_pass(framebuffer.clone(), false, clear_values)
+                    .begin_render_pass(framebuffer.framebuffer.clone(), false, clear_values)
                     .unwrap()
                     // We are now inside the first subpass of the render pass. We add a draw command.
                     //
                     // The last two parameters contain the list of resources to pass to the shaders.
                     // Since we used an `EmptyPipeline` object, the objects have to be `()`.
                     .draw_indexed(
-                        self.pipeline.clone(),
+                        self.pipeline[0].clone(),
                         &self.dynamic_state,
                         vec![self.vertex_buffer.clone()],
                         self.index_buffer.clone(),
@@ -433,9 +558,16 @@ void main() {
                         (cam.to_matrix()),
                     )
                     .unwrap()
-                    // We leave the render pass by calling `draw_end`. Note that if we had multiple
-                    // subpasses we could have called `next_inline` (or `next_secondary`) to jump to the
-                    // next subpass.
+                    .next_subpass(false)
+                    .unwrap()
+                    .draw(
+                        self.pipeline[1].clone(),
+                        &self.dynamic_state,
+                        Vec::new(),
+                        (),
+                        (),
+                    )
+                    .unwrap()
                     .end_render_pass()
                     .unwrap()
                     // Finish building the command buffer by calling `build`.

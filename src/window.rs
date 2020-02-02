@@ -30,9 +30,10 @@ struct TestVertex {
     pub position: [f32; 2],
 }
 
-pub fn main_loop<Window>()
+pub fn main_loop<Window, F>()
 where
-    Window: crate::window::Window,
+    F: Frame,
+    Window: crate::window::Window<F>,
 {
     // The first step of any Vulkan program is to create an instance.
     let instance = {
@@ -355,7 +356,14 @@ where
     }
 }
 
-pub trait Window {
+pub trait Frame {
+    fn get_framebuffer(&self) -> &Arc<dyn FramebufferAbstract + Send + Sync>;
+}
+
+pub trait Window<F>
+where
+    F: Frame,
+{
     fn setup(
         device: &Arc<Device>,
         swapchain_format: vulkano::format::Format,
@@ -370,43 +378,13 @@ pub trait Window {
         &mut self,
         device: &Arc<Device>,
         images: &[Arc<SwapchainImage<winit::Window>>],
-    ) -> Vec<Arc<dyn FramebufferAbstract + Send + Sync>> {
-        let dimensions = images[0].dimensions();
+    ) -> Vec<F>;
 
-        let viewport = Viewport {
-            origin: [0.0, 0.0],
-            dimensions: [dimensions[0] as f32, dimensions[1] as f32],
-            depth_range: 0.0..1.0,
-        };
-        self.get_dynamic_state_ref().viewports = Some(vec![viewport]);
-
-        let depth_buffer = AttachmentImage::transient(
-            device.clone(),
-            dimensions,
-            vulkano::format::Format::D32Sfloat,
-        )
-        .unwrap();
-
-        images
-            .iter()
-            .map(|image| {
-                Arc::new(
-                    Framebuffer::start(self.get_render_pass().clone())
-                        .add(image.clone())
-                        .unwrap()
-                        .add(depth_buffer.clone())
-                        .unwrap()
-                        .build()
-                        .unwrap(),
-                ) as Arc<dyn FramebufferAbstract + Send + Sync>
-            })
-            .collect::<Vec<_>>()
-    }
     fn render(
         &mut self,
         device: &Arc<Device>,
         queue_family: QueueFamily,
-        framebuffer: &Arc<dyn FramebufferAbstract + Send + Sync>,
+        framebuffer: &F,
     ) -> AutoCommandBuffer;
 }
 
@@ -417,7 +395,17 @@ pub struct DemoTriangleRenderer {
     dynamic_state: DynamicState,
 }
 
-impl Window for DemoTriangleRenderer {
+pub struct TriangleFrame {
+    framebuffer: Arc<dyn FramebufferAbstract + Send + Sync>,
+}
+
+impl Frame for TriangleFrame {
+    fn get_framebuffer(&self) -> &Arc<dyn FramebufferAbstract + Send + Sync> {
+        &self.framebuffer
+    }
+}
+
+impl Window<TriangleFrame> for DemoTriangleRenderer {
     fn setup(
         device: &Arc<Device>,
         swapchain_format: vulkano::format::Format,
@@ -558,11 +546,48 @@ void main() {
         self.render_pass.borrow_mut()
     }
 
+    fn create_framebuffers(
+        &mut self,
+        device: &Arc<Device>,
+        images: &[Arc<SwapchainImage<winit::Window>>],
+    ) -> Vec<TriangleFrame> {
+        let dimensions = images[0].dimensions();
+
+        let viewport = Viewport {
+            origin: [0.0, 0.0],
+            dimensions: [dimensions[0] as f32, dimensions[1] as f32],
+            depth_range: 0.0..1.0,
+        };
+        self.get_dynamic_state_ref().viewports = Some(vec![viewport]);
+
+        let depth_buffer = AttachmentImage::transient(
+            device.clone(),
+            dimensions,
+            vulkano::format::Format::D32Sfloat,
+        )
+        .unwrap();
+
+        images
+            .iter()
+            .map(|image| TriangleFrame {
+                framebuffer: Arc::new(
+                    Framebuffer::start(self.get_render_pass().clone())
+                        .add(image.clone())
+                        .unwrap()
+                        .add(depth_buffer.clone())
+                        .unwrap()
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .collect::<Vec<_>>()
+    }
+
     fn render(
         &mut self,
         device: &Arc<Device>,
         queue_family: QueueFamily,
-        framebuffer: &Arc<dyn FramebufferAbstract + Send + Sync>,
+        framebuffer: &TriangleFrame,
     ) -> AutoCommandBuffer {
         // We now create a buffer that will store the shape of our triangle.
 
@@ -588,7 +613,7 @@ void main() {
                 // The third parameter builds the list of values to clear the attachments with. The API
                 // is similar to the list of attachments when building the framebuffers, except that
                 // only the attachments that use `load: Clear` appear in the list.
-                .begin_render_pass(framebuffer.clone(), false, clear_values)
+                .begin_render_pass(framebuffer.framebuffer.clone(), false, clear_values)
                 .unwrap()
                 // We are now inside the first subpass of the render pass. We add a draw command.
                 //
