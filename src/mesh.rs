@@ -13,6 +13,10 @@ pub struct Vertex {
     pub tangent: [f32; 4],
     pub texcoord: [f32; 2],
 }
+#[derive(Default, Debug, Clone)]
+pub struct PostVertex {
+    pub pos: [f32; 2],
+}
 
 pub struct MeshCreateInfo {
     pub indicies: Vec<u32>,

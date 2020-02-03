@@ -78,7 +78,7 @@ mod tests {
     }
 
     use crate::camera::RenderCamera;
-    use crate::mesh::{Mesh, MeshCreateInfo, Vertex};
+    use crate::mesh::{Mesh, MeshCreateInfo, PostVertex, Vertex};
     use crate::window::{DemoTriangleRenderer, Frame, TriangleFrame, Window};
     use cgmath::{Deg, Euler, Matrix4, Quaternion, Vector3};
     use gltf::mesh::Reader;
@@ -86,21 +86,25 @@ mod tests {
     use std::borrow::BorrowMut;
     use std::sync::Arc;
     use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, DeviceLocalBuffer};
-    use vulkano::command_buffer::sys::KindOcclusionQuery::Forbidden;
+
     use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
     use vulkano::device::{Device, DeviceExtensions};
     use vulkano::framebuffer::{FramebufferAbstract, RenderPassAbstract, Subpass};
-    use vulkano::half::f16;
+
     use vulkano::instance::{Instance, PhysicalDevice};
-    use vulkano::pipeline::vertex::SingleBufferDefinition;
+
     use vulkano::pipeline::viewport::Viewport;
     use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
-    use vulkano::swapchain::SwapchainAcquireFuture;
-    use vulkano::sync::{GpuFuture, JoinFuture};
+
+    use vulkano::descriptor::descriptor::DescriptorDesc;
+    use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
+    use vulkano::descriptor::PipelineLayoutAbstract;
+    use vulkano::sync::GpuFuture;
+    use winit::os::unix::x11::util::PointerState;
 
     #[test]
     fn triangle() {
-        crate::window::main_loop::<DemoTriangleRenderer, TriangleFrame>();
+        crate::window::main_loop::<DemoMeshRenderer, MeshFrame>();
     }
 
     pub struct DemoMeshRenderer {
@@ -108,11 +112,14 @@ mod tests {
         index_buffer: Arc<DeviceLocalBuffer<[u32]>>,
         render_pass: Arc<dyn RenderPassAbstract + Sync + Send>,
         pipeline: [Arc<dyn GraphicsPipelineAbstract + Sync + Send>; 2],
+        pipeline_layout: [Arc<dyn PipelineLayoutAbstract + Send + Sync>; 2],
         dynamic_state: DynamicState,
     }
 
     struct MeshFrame {
         framebuffer: Arc<dyn FramebufferAbstract + Send + Sync>,
+        albedobuffer: Arc<AttachmentImage>,
+        normalbuffer: Arc<AttachmentImage>,
     }
 
     impl Frame for MeshFrame {
@@ -313,7 +320,7 @@ void main() {
             let vs = vs::Shader::load(device.clone()).unwrap();
             let fs = fs::Shader::load(device.clone()).unwrap();
 
-            let pipeline = Arc::new(
+            let pipeline1 = Arc::new(
                 GraphicsPipeline::start()
                     // We need to indicate the layout of the vertices.
                     // The type `SingleBufferDefinition` actually contains a template parameter corresponding
@@ -338,27 +345,21 @@ void main() {
                     .unwrap(),
             );
 
+            vulkano::impl_vertex!(PostVertex, pos);
+
             mod vs2 {
                 vulkano_shaders::shader! {
                     ty: "vertex",
                     src: "
 #version 450
-
+layout(location = 0) in vec2 pos;
 
 layout(push_constant) uniform PushConstants {
     ivec2 resolution;
 } push_constants;
 
 void main() {
-    vec2 verts[6];
-    verts[0]=vec2(-1.0,-1.0);
-    verts[1]=vec2(1.0,-1.0);
-    verts[2]=vec2(-1.0,1.0);
-    verts[3]=vec2(-1.0,1.0);
-    verts[4]=vec2(1.0,-1.0);
-    verts[5]=vec2(1.0,1.0);
-
-    gl_Position = vec4(verts[gl_VertexIndex],0.0,1.0);
+    gl_Position = vec4(pos,0.0,1.0);
 }"
                 }
             }
@@ -389,7 +390,7 @@ void main() {
                     // We need to indicate the layout of the vertices.
                     // The type `SingleBufferDefinition` actually contains a template parameter corresponding
                     // to the type of each vertex. But in this code it is automatically inferred.
-                    //.vertex_input_single_buffer::<Vertex>()
+                    .vertex_input_single_buffer::<PostVertex>()
                     // A Vulkan shader can in theory contain multiple entry points, so we have to specify
                     // which one. The `main` word of `main_entry_point` actually corresponds to the name of
                     // the entry point.
@@ -422,7 +423,8 @@ void main() {
                 vertex_buffer: mesh.vertbuff,
                 index_buffer: mesh.indbuff,
                 render_pass,
-                pipeline: [pipeline, pipeline2],
+                pipeline: [pipeline1.clone(), pipeline2.clone()],
+                pipeline_layout: [pipeline1.clone(), pipeline2.clone()],
                 dynamic_state,
             }
         }
@@ -491,6 +493,8 @@ void main() {
                             .build()
                             .unwrap(),
                     ),
+                    albedobuffer: albedo_buffer.clone(),
+                    normalbuffer: normal_buffer.clone(),
                 })
                 .collect::<Vec<_>>()
         }
@@ -524,15 +528,27 @@ void main() {
                 near: 0.1,
             };
 
-            // In order to draw, we have to build a *command buffer*. The command buffer object holds
-            // the list of commands that are going to be executed.
-            //
-            // Building a command buffer is an expensive operation (usually a few hundred
-            // microseconds), but it is known to be a hot path in the driver and is expected to be
-            // optimized.
-            //
-            // Note that we have to pass a queue family when we create the command buffer. The command
-            // buffer will only be executable on that given queue family.
+            let post_area = CpuAccessibleBuffer::from_iter(
+                device.clone(),
+                BufferUsage::all(),
+                [
+                    PostVertex { pos: [-0.5, -0.25] },
+                    PostVertex { pos: [0.0, 0.5] },
+                    PostVertex { pos: [0.25, -0.1] },
+                ]
+                .iter()
+                .cloned(),
+            )
+            .unwrap();
+
+            let descriptor_set = PersistentDescriptorSet::start(self.pipeline_layout[1].clone(), 0)
+                .add_image(framebuffer.albedobuffer.clone())
+                .unwrap()
+                .add_image(framebuffer.normalbuffer.clone())
+                .unwrap()
+                .build()
+                .unwrap();
+
             let command_buffer =
                 AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue_family)
                     .unwrap()
@@ -563,8 +579,8 @@ void main() {
                     .draw(
                         self.pipeline[1].clone(),
                         &self.dynamic_state,
-                        Vec::new(),
-                        (),
+                        vec![post_area.clone()],
+                        descriptor_set,
                         (),
                     )
                     .unwrap()
