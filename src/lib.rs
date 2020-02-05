@@ -80,7 +80,7 @@ mod tests {
     use crate::camera::RenderCamera;
     use crate::mesh::{Mesh, MeshCreateInfo, PostVertex, Vertex};
     use crate::window::{DemoTriangleRenderer, Frame, TriangleFrame, Window};
-    use cgmath::{Deg, Euler, Matrix4, Quaternion, Vector3};
+    use cgmath::{Deg, Euler, Matrix4, Quaternion, SquareMatrix, Vector3};
     use gltf::mesh::Reader;
     use gltf::Gltf;
     use std::borrow::BorrowMut;
@@ -120,6 +120,7 @@ mod tests {
         framebuffer: Arc<dyn FramebufferAbstract + Send + Sync>,
         albedobuffer: Arc<AttachmentImage>,
         normalbuffer: Arc<AttachmentImage>,
+        depthbuffer: Arc<AttachmentImage>,
     }
 
     impl Frame for MeshFrame {
@@ -129,6 +130,10 @@ mod tests {
     }
 
     impl Window<MeshFrame> for DemoMeshRenderer {
+        fn get_device_extensions(extensions: &mut DeviceExtensions) {
+            extensions.khr_storage_buffer_storage_class = true;
+        }
+
         fn setup(
             device: &Arc<Device>,
             swapchain_format: vulkano::format::Format,
@@ -256,7 +261,7 @@ mod tests {
                         color: [color],
                         // No depth-stencil attachment is indicated with empty brackets.
                         depth_stencil: {},
-                        input: [albedo,normals]
+                        input: [albedo,normals,depth]
                     }
                     ]
                 )
@@ -285,8 +290,13 @@ layout(push_constant) uniform PushConstants {
     dmat4 viewproj;
 } push_constants;
 
+layout(set = 0, binding = 0) buffer TransformBlock
+{
+    dmat4 mat;
+} transform;
+
 void main() {
-    gl_Position = vec4(push_constants.viewproj * vec4(position, 1.0));
+    gl_Position = vec4(push_constants.viewproj * transform.mat * vec4(position, 1.0));
     
     frag_colour=colour;
     frag_normal=normal;
@@ -354,10 +364,6 @@ void main() {
 #version 450
 layout(location = 0) in vec2 pos;
 
-layout(push_constant) uniform PushConstants {
-    ivec2 resolution;
-} push_constants;
-
 void main() {
     gl_Position = vec4(pos,0.0,1.0);
 }"
@@ -372,10 +378,14 @@ void main() {
 
 layout(input_attachment_index = 0, set = 0, binding = 0) uniform subpassInput u_diffuse;
 layout(input_attachment_index = 1, set = 0, binding = 1) uniform subpassInput u_normal;
+layout(input_attachment_index = 2, set = 0, binding = 2) uniform subpassInput u_depth;
 
 layout(location = 0) out vec4 f_colour;
 
 void main() {
+    if(subpassLoad(u_depth).x==1)
+        discard;
+
     f_colour = vec4(subpassLoad(u_normal).xyz, 1.0);
 }
 "
@@ -450,13 +460,6 @@ void main() {
             };
             self.get_dynamic_state_ref().viewports = Some(vec![viewport]);
 
-            let depth_buffer = AttachmentImage::transient(
-                device.clone(),
-                dimensions,
-                vulkano::format::Format::D32Sfloat,
-            )
-            .unwrap();
-
             let mut usage = ImageUsage::none();
             usage.input_attachment = true;
             usage.transient_attachment = true;
@@ -473,6 +476,14 @@ void main() {
                 device.clone(),
                 dimensions,
                 vulkano::format::Format::R16G16B16A16Sfloat,
+                usage,
+            )
+            .unwrap();
+
+            let depth_buffer = AttachmentImage::with_usage(
+                device.clone(),
+                dimensions,
+                vulkano::format::Format::D32Sfloat,
                 usage,
             )
             .unwrap();
@@ -495,6 +506,7 @@ void main() {
                     ),
                     albedobuffer: albedo_buffer.clone(),
                     normalbuffer: normal_buffer.clone(),
+                    depthbuffer: depth_buffer.clone(),
                 })
                 .collect::<Vec<_>>()
         }
@@ -532,22 +544,48 @@ void main() {
                 device.clone(),
                 BufferUsage::all(),
                 [
-                    PostVertex { pos: [-0.5, -0.25] },
-                    PostVertex { pos: [0.0, 0.5] },
-                    PostVertex { pos: [0.25, -0.1] },
+                    PostVertex { pos: [-1.0, -1.0] },
+                    PostVertex { pos: [1.0, -1.0] },
+                    PostVertex { pos: [-1.0, 1.0] },
+                    PostVertex { pos: [-1.0, 1.0] },
+                    PostVertex { pos: [1.0, -1.0] },
+                    PostVertex { pos: [1.0, 1.0] },
                 ]
                 .iter()
                 .cloned(),
             )
             .unwrap();
 
-            let descriptor_set = PersistentDescriptorSet::start(self.pipeline_layout[1].clone(), 0)
-                .add_image(framebuffer.albedobuffer.clone())
-                .unwrap()
-                .add_image(framebuffer.normalbuffer.clone())
-                .unwrap()
-                .build()
-                .unwrap();
+            let descriptor_set2 =
+                PersistentDescriptorSet::start(self.pipeline_layout[1].clone(), 0)
+                    .add_image(framebuffer.albedobuffer.clone())
+                    .unwrap()
+                    .add_image(framebuffer.normalbuffer.clone())
+                    .unwrap()
+                    .add_image(framebuffer.depthbuffer.clone())
+                    .unwrap()
+                    .build()
+                    .unwrap();
+
+            let mat: Matrix4<f64> = Matrix4::from_translation(Vector3 {
+                x: 0.0,
+                y: 4.0,
+                z: 0.0,
+            });
+
+            let transforms = CpuAccessibleBuffer::from_iter(
+                device.clone(),
+                BufferUsage::all(),
+                [mat].iter().cloned(),
+            )
+            .unwrap();
+
+            let descriptor_set1 =
+                PersistentDescriptorSet::start(self.pipeline_layout[0].clone(), 0)
+                    .add_buffer(transforms)
+                    .unwrap()
+                    .build()
+                    .unwrap();
 
             let command_buffer =
                 AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue_family)
@@ -570,7 +608,7 @@ void main() {
                         &self.dynamic_state,
                         vec![self.vertex_buffer.clone()],
                         self.index_buffer.clone(),
-                        (),
+                        descriptor_set1,
                         (cam.to_matrix()),
                     )
                     .unwrap()
@@ -580,7 +618,7 @@ void main() {
                         self.pipeline[1].clone(),
                         &self.dynamic_state,
                         vec![post_area.clone()],
-                        descriptor_set,
+                        descriptor_set2,
                         (),
                     )
                     .unwrap()

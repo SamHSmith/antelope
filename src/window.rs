@@ -124,10 +124,13 @@ where
     //   much it should prioritize queues between one another.
     //
     // The list of created queues is returned by the function alongside with the device.
-    let device_ext = DeviceExtensions {
+    let mut device_ext = DeviceExtensions {
         khr_swapchain: true,
         ..DeviceExtensions::none()
     };
+
+    Window::get_device_extensions(&mut device_ext);
+
     let (device, mut queues) = Device::new(
         physical,
         physical.supported_features(),
@@ -189,7 +192,7 @@ where
             &queue,
             SurfaceTransform::Identity,
             alpha,
-            PresentMode::Fifo, //TODO add custom present modes
+            PresentMode::Immediate, //TODO add custom present modes
             true,
             None,
         )
@@ -345,7 +348,7 @@ where
         }
 
         totalcounts += 1;
-        totalmillies += framestart.elapsed().as_secs_f64() / 1000.0;
+        totalmillies += framestart.elapsed().as_secs_f64() * 1000.0;
 
         if last_printout.elapsed().as_secs() >= 8 {
             println!("Avg Frametime: {}", totalmillies / f64::from(totalcounts));
@@ -364,6 +367,12 @@ pub trait Window<F>
 where
     F: Frame,
 {
+    /*
+    Used to request for device extensions.
+    TODO Add fail case.
+    */
+    fn get_device_extensions(extensions: &mut DeviceExtensions) {}
+
     fn setup(
         device: &Arc<Device>,
         swapchain_format: vulkano::format::Format,
