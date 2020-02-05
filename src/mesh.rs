@@ -39,7 +39,7 @@ impl Mesh {
         info: MeshCreateInfo,
         device: &Arc<Device>,
         queue_family: QueueFamily,
-    ) -> (Mesh, AutoCommandBuffer) {
+    ) -> (Arc<Mesh>, AutoCommandBuffer) {
         let i = CpuAccessibleBuffer::from_iter(
             device.clone(),
             BufferUsage::transfer_source(),
@@ -78,10 +78,10 @@ impl Mesh {
             .unwrap();
 
         (
-            Mesh {
+            Arc::new(Mesh {
                 indbuff: di,
                 vertbuff: dv,
-            },
+            }),
             cmd.build().unwrap(),
         )
     }

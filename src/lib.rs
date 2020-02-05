@@ -78,7 +78,7 @@ mod tests {
     }
 
     use crate::camera::RenderCamera;
-    use crate::mesh::{Mesh, MeshCreateInfo, PostVertex, Vertex};
+    use crate::mesh::{Mesh, MeshCreateInfo, PostVertex, RenderInfo, Vertex};
     use crate::window::{DemoTriangleRenderer, Frame, TriangleFrame, Window};
     use cgmath::{Deg, Euler, Matrix4, Quaternion, SquareMatrix, Vector3};
     use gltf::mesh::Reader;
@@ -108,8 +108,7 @@ mod tests {
     }
 
     pub struct DemoMeshRenderer {
-        vertex_buffer: Arc<DeviceLocalBuffer<[Vertex]>>,
-        index_buffer: Arc<DeviceLocalBuffer<[u32]>>,
+        render_info: RenderInfo,
         render_pass: Arc<dyn RenderPassAbstract + Sync + Send>,
         pipeline: [Arc<dyn GraphicsPipelineAbstract + Sync + Send>; 2],
         pipeline_layout: [Arc<dyn PipelineLayoutAbstract + Send + Sync>; 2],
@@ -435,8 +434,21 @@ void main() {
             };
 
             DemoMeshRenderer {
-                vertex_buffer: mesh.vertbuff,
-                index_buffer: mesh.indbuff,
+                render_info: RenderInfo {
+                    meshes: vec![mesh.clone(), mesh.clone()],
+                    mats: vec![
+                        Matrix4::from_translation(Vector3 {
+                            x: 0.0,
+                            y: 2.0,
+                            z: 0.0,
+                        }),
+                        Matrix4::from_translation(Vector3 {
+                            x: 3.0,
+                            y: 2.0,
+                            z: 0.0,
+                        }),
+                    ],
+                },
                 render_pass,
                 pipeline: [pipeline1.clone(), pipeline2.clone()],
                 pipeline_layout: [pipeline1.clone(), pipeline2.clone()],
@@ -585,33 +597,12 @@ void main() {
             )
             .unwrap();
 
+            debug_assert_eq!(self.render_info.mats.len(), self.render_info.meshes.len()); //The code will still render if the assert fails. But this
             let transforms = CpuAccessibleBuffer::from_iter(
+                //a good indication of a bug somewhere else in the code.
                 device.clone(),
                 BufferUsage::all(),
-                [
-                    Matrix4::from_translation(Vector3 {
-                        x: 0.0,
-                        y: 4.0,
-                        z: 0.0,
-                    }),
-                    Matrix4::from_translation(Vector3 {
-                        x: 0.0,
-                        y: -4.0,
-                        z: 0.0,
-                    }),
-                    Matrix4::from_translation(Vector3 {
-                        x: 5.0,
-                        y: 2.0,
-                        z: 0.0,
-                    }),
-                    Matrix4::from_translation(Vector3 {
-                        x: 2.0,
-                        y: 2.0,
-                        z: 4.0,
-                    }),
-                ]
-                .iter()
-                .cloned(),
+                self.render_info.mats.clone().iter().cloned(),
             )
             .unwrap();
 
@@ -638,15 +629,15 @@ void main() {
                     .begin_render_pass(framebuffer.framebuffer.clone(), false, clear_values)
                     .unwrap();
 
-            for i in 0..12 {
+            for i in 0..self.render_info.meshes.len() {
                 command_buffer = command_buffer
                     .draw_indexed(
                         self.pipeline[0].clone(),
                         &self.dynamic_state,
-                        vec![self.vertex_buffer.clone()],
-                        self.index_buffer.clone(),
+                        vec![self.render_info.meshes[i].vertbuff.clone()],
+                        self.render_info.meshes[i].indbuff.clone(),
                         descriptor_set1.clone(),
-                        (i),
+                        i,
                     )
                     .unwrap();
             }
