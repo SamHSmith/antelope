@@ -287,16 +287,21 @@ layout(location = 2) out vec4 frag_tangent;
 layout(location = 3) out vec2 frag_texcoord;
 
 layout(push_constant) uniform PushConstants {
-    dmat4 viewproj;
+    uint index;
 } push_constants;
 
-layout(set = 0, binding = 0) buffer TransformBlock
+layout(binding = 0) uniform CameraBlock
 {
-    dmat4 mat;
+    dmat4 viewproj;
+} camera;
+
+layout(binding = 1) buffer TransformBlock
+{
+    dmat4 mat[];
 } transform;
 
 void main() {
-    gl_Position = vec4(push_constants.viewproj * transform.mat * vec4(position, 1.0));
+    gl_Position = vec4(camera.viewproj * transform.mat[push_constants.index] * vec4(position, 1.0));
     
     frag_colour=colour;
     frag_normal=normal;
@@ -573,21 +578,54 @@ void main() {
                 z: 0.0,
             });
 
-            let transforms = CpuAccessibleBuffer::from_iter(
+            let camera_uniform = CpuAccessibleBuffer::from_iter(
                 device.clone(),
                 BufferUsage::all(),
-                [mat].iter().cloned(),
+                [cam.to_matrix()].iter().cloned(),
             )
             .unwrap();
 
-            let descriptor_set1 =
+            let transforms = CpuAccessibleBuffer::from_iter(
+                device.clone(),
+                BufferUsage::all(),
+                [
+                    Matrix4::from_translation(Vector3 {
+                        x: 0.0,
+                        y: 4.0,
+                        z: 0.0,
+                    }),
+                    Matrix4::from_translation(Vector3 {
+                        x: 0.0,
+                        y: -4.0,
+                        z: 0.0,
+                    }),
+                    Matrix4::from_translation(Vector3 {
+                        x: 5.0,
+                        y: 2.0,
+                        z: 0.0,
+                    }),
+                    Matrix4::from_translation(Vector3 {
+                        x: 2.0,
+                        y: 2.0,
+                        z: 4.0,
+                    }),
+                ]
+                .iter()
+                .cloned(),
+            )
+            .unwrap();
+
+            let descriptor_set1 = Arc::new(
                 PersistentDescriptorSet::start(self.pipeline_layout[0].clone(), 0)
+                    .add_buffer(camera_uniform)
+                    .unwrap()
                     .add_buffer(transforms)
                     .unwrap()
                     .build()
-                    .unwrap();
+                    .unwrap(),
+            );
 
-            let command_buffer =
+            let mut command_buffer =
                 AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue_family)
                     .unwrap()
                     // Before we can draw, we have to *enter a render pass*. There are two methods to do
@@ -598,37 +636,37 @@ void main() {
                     // is similar to the list of attachments when building the framebuffers, except that
                     // only the attachments that use `load: Clear` appear in the list.
                     .begin_render_pass(framebuffer.framebuffer.clone(), false, clear_values)
-                    .unwrap()
-                    // We are now inside the first subpass of the render pass. We add a draw command.
-                    //
-                    // The last two parameters contain the list of resources to pass to the shaders.
-                    // Since we used an `EmptyPipeline` object, the objects have to be `()`.
+                    .unwrap();
+
+            for i in 0..12 {
+                command_buffer = command_buffer
                     .draw_indexed(
                         self.pipeline[0].clone(),
                         &self.dynamic_state,
                         vec![self.vertex_buffer.clone()],
                         self.index_buffer.clone(),
-                        descriptor_set1,
-                        (cam.to_matrix()),
+                        descriptor_set1.clone(),
+                        (i),
                     )
-                    .unwrap()
-                    .next_subpass(false)
-                    .unwrap()
-                    .draw(
-                        self.pipeline[1].clone(),
-                        &self.dynamic_state,
-                        vec![post_area.clone()],
-                        descriptor_set2,
-                        (),
-                    )
-                    .unwrap()
-                    .end_render_pass()
-                    .unwrap()
-                    // Finish building the command buffer by calling `build`.
-                    .build()
                     .unwrap();
+            }
 
-            command_buffer
+            command_buffer = command_buffer
+                .next_subpass(false)
+                .unwrap()
+                .draw(
+                    self.pipeline[1].clone(),
+                    &self.dynamic_state,
+                    vec![post_area.clone()],
+                    descriptor_set2,
+                    (),
+                )
+                .unwrap()
+                .end_render_pass()
+                .unwrap();
+
+            // Finish building the command buffer by calling `build`.
+            command_buffer.build().unwrap()
         }
     }
 }

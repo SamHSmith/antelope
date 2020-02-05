@@ -1,3 +1,4 @@
+use cgmath::Matrix4;
 use std::ops::BitOr;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, DeviceLocalBuffer};
@@ -26,6 +27,11 @@ pub struct MeshCreateInfo {
 pub struct Mesh {
     pub indbuff: Arc<DeviceLocalBuffer<[u32]>>,
     pub vertbuff: Arc<DeviceLocalBuffer<[Vertex]>>,
+}
+
+pub struct RenderInfo {
+    pub meshes: Vec<Arc<Mesh>>,
+    pub mats: Vec<Matrix4<f64>>,
 }
 
 impl Mesh {
