@@ -83,8 +83,8 @@ mod tests {
     use cgmath::{Deg, Euler, Matrix4, Quaternion, SquareMatrix, Vector3};
     use gltf::mesh::Reader;
     use gltf::Gltf;
-    use std::borrow::BorrowMut;
-    use std::sync::Arc;
+    use std::borrow::{Borrow, BorrowMut};
+    use std::sync::{Arc, Mutex};
     use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, DeviceLocalBuffer};
 
     use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
@@ -104,15 +104,15 @@ mod tests {
 
     #[test]
     fn triangle() {
-        crate::window::main_loop::<DemoMeshRenderer, MeshFrame>();
+        crate::window::main_loop::<DemoTriangleRenderer, TriangleFrame>();
     }
 
     pub struct DemoMeshRenderer {
         render_info: RenderInfo,
-        render_pass: Arc<dyn RenderPassAbstract + Sync + Send>,
+        render_pass: Mutex<Arc<dyn RenderPassAbstract + Sync + Send>>,
         pipeline: [Arc<dyn GraphicsPipelineAbstract + Sync + Send>; 2],
         pipeline_layout: [Arc<dyn PipelineLayoutAbstract + Send + Sync>; 2],
-        dynamic_state: DynamicState,
+        dynamic_state: Mutex<DynamicState>,
     }
 
     struct MeshFrame {
@@ -449,22 +449,23 @@ void main() {
                         }),
                     ],
                 },
-                render_pass,
+                render_pass: Mutex::new(render_pass),
                 pipeline: [pipeline1.clone(), pipeline2.clone()],
                 pipeline_layout: [pipeline1.clone(), pipeline2.clone()],
-                dynamic_state,
+                dynamic_state: Mutex::new(dynamic_state),
             }
         }
 
-        fn get_dynamic_state_ref(&mut self) -> &mut DynamicState {
-            self.dynamic_state.borrow_mut()
+        fn get_dynamic_state_ref(&self) -> &Mutex<DynamicState> {
+            self.dynamic_state.borrow()
         }
-        fn get_render_pass(&mut self) -> &Arc<dyn RenderPassAbstract + Sync + Send> {
-            self.render_pass.borrow_mut()
+
+        fn get_render_pass(&self) -> &Mutex<Arc<dyn RenderPassAbstract + Sync + Send>> {
+            self.render_pass.borrow()
         }
 
         fn create_framebuffers(
-            &mut self,
+            &self,
             device: &Arc<Device>,
             images: &[Arc<SwapchainImage<winit::Window>>],
         ) -> Vec<MeshFrame> {
@@ -475,7 +476,7 @@ void main() {
                 dimensions: [dimensions[0] as f32, dimensions[1] as f32],
                 depth_range: 0.0..1.0,
             };
-            self.get_dynamic_state_ref().viewports = Some(vec![viewport]);
+            self.get_dynamic_state_ref().lock().unwrap().viewports = Some(vec![viewport]);
 
             let mut usage = ImageUsage::none();
             usage.input_attachment = true;
@@ -509,17 +510,19 @@ void main() {
                 .iter()
                 .map(|image| MeshFrame {
                     framebuffer: Arc::new(
-                        vulkano::framebuffer::Framebuffer::start(self.get_render_pass().clone())
-                            .add(image.clone())
-                            .unwrap()
-                            .add(depth_buffer.clone())
-                            .unwrap()
-                            .add(albedo_buffer.clone())
-                            .unwrap()
-                            .add(normal_buffer.clone())
-                            .unwrap()
-                            .build()
-                            .unwrap(),
+                        vulkano::framebuffer::Framebuffer::start(
+                            self.get_render_pass().lock().unwrap().clone(),
+                        )
+                        .add(image.clone())
+                        .unwrap()
+                        .add(depth_buffer.clone())
+                        .unwrap()
+                        .add(albedo_buffer.clone())
+                        .unwrap()
+                        .add(normal_buffer.clone())
+                        .unwrap()
+                        .build()
+                        .unwrap(),
                     ),
                     albedobuffer: albedo_buffer.clone(),
                     normalbuffer: normal_buffer.clone(),
@@ -529,7 +532,7 @@ void main() {
         }
 
         fn render(
-            &mut self,
+            &self,
             device: &Arc<Device>,
             queue_family: QueueFamily,
             framebuffer: &MeshFrame,
@@ -633,7 +636,7 @@ void main() {
                 command_buffer = command_buffer
                     .draw_indexed(
                         self.pipeline[0].clone(),
-                        &self.dynamic_state,
+                        &self.dynamic_state.lock().unwrap(),
                         vec![self.render_info.meshes[i].vertbuff.clone()],
                         self.render_info.meshes[i].indbuff.clone(),
                         descriptor_set1.clone(),
@@ -647,7 +650,7 @@ void main() {
                 .unwrap()
                 .draw(
                     self.pipeline[1].clone(),
-                    &self.dynamic_state,
+                    &self.dynamic_state.lock().unwrap(),
                     vec![post_area.clone()],
                     descriptor_set2,
                     (),
