@@ -96,6 +96,7 @@ mod tests {
     use vulkano::pipeline::viewport::Viewport;
     use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 
+    use std::time::Duration;
     use vulkano::descriptor::descriptor::DescriptorDesc;
     use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
     use vulkano::descriptor::PipelineLayoutAbstract;
@@ -104,7 +105,15 @@ mod tests {
 
     #[test]
     fn triangle() {
-        crate::window::main_loop::<DemoTriangleRenderer, TriangleFrame>();
+        let (thread, win) = crate::window::main_loop::<DemoTriangleRenderer, TriangleFrame>();
+        std::thread::sleep(Duration::new(2, 0));
+        win.stop();
+    }
+
+    #[test]
+    fn mesh() {
+        let (thread, win) = crate::window::main_loop::<DemoMeshRenderer, MeshFrame>();
+        thread.join().unwrap_err();
     }
 
     pub struct DemoMeshRenderer {
@@ -113,6 +122,7 @@ mod tests {
         pipeline: [Arc<dyn GraphicsPipelineAbstract + Sync + Send>; 2],
         pipeline_layout: [Arc<dyn PipelineLayoutAbstract + Send + Sync>; 2],
         dynamic_state: Mutex<DynamicState>,
+        should_stop: Mutex<bool>,
     }
 
     struct MeshFrame {
@@ -453,6 +463,7 @@ void main() {
                 pipeline: [pipeline1.clone(), pipeline2.clone()],
                 pipeline_layout: [pipeline1.clone(), pipeline2.clone()],
                 dynamic_state: Mutex::new(dynamic_state),
+                should_stop: Mutex::new(false),
             }
         }
 
@@ -462,6 +473,15 @@ void main() {
 
         fn get_render_pass(&self) -> &Mutex<Arc<dyn RenderPassAbstract + Sync + Send>> {
             self.render_pass.borrow()
+        }
+
+        fn stop(&self) {
+            let mut data = self.should_stop.lock().unwrap();
+            *data = true;
+        }
+
+        fn should_stop(&self) -> bool {
+            *self.should_stop.lock().unwrap()
         }
 
         fn create_framebuffers(

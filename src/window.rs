@@ -19,8 +19,10 @@ use winit::{Event, EventsLoop, WindowBuilder, WindowEvent};
 
 use std::borrow::{Borrow, BorrowMut};
 use std::clone::Clone;
+use std::intrinsics::transmute;
+use std::ops::DerefMut;
 use std::sync::{mpsc, Arc, Mutex};
-use std::thread::Thread;
+use std::thread::{JoinHandle, Thread};
 use std::time::{Duration, Instant};
 
 #[derive(Default, Debug, Clone)]
@@ -28,7 +30,7 @@ struct TestVertex {
     pub position: [f32; 2],
 }
 
-pub fn main_loop<Window: 'static, F>()
+pub fn main_loop<Window: 'static, F>() -> (JoinHandle<()>, Arc<Window>)
 where
     F: Frame,
     Window: crate::window::Window<F>,
@@ -353,6 +355,10 @@ where
                 } => recreate_swapchain = true,
                 _ => (),
             });
+            if win.should_stop() {
+                done = true;
+            }
+
             if done {
                 return;
             }
@@ -370,7 +376,7 @@ where
     });
 
     let windowref = rx.recv().unwrap();
-    std::thread::sleep(Duration::new(20, 0));
+    (thread, windowref)
 }
 
 pub trait Frame {
@@ -396,6 +402,8 @@ where
 
     fn get_dynamic_state_ref(&self) -> &Mutex<DynamicState>;
     fn get_render_pass(&self) -> &Mutex<Arc<dyn RenderPassAbstract + Sync + Send>>;
+    fn stop(&self);
+    fn should_stop(&self) -> bool;
 
     fn create_framebuffers(
         &self,
@@ -416,6 +424,7 @@ pub struct DemoTriangleRenderer {
     render_pass: Mutex<Arc<dyn RenderPassAbstract + Sync + Send>>,
     pipeline: Mutex<Arc<dyn GraphicsPipelineAbstract + Sync + Send>>,
     dynamic_state: Mutex<DynamicState>,
+    should_stop: Mutex<bool>,
 }
 
 pub struct TriangleFrame {
@@ -559,6 +568,7 @@ void main() {
             render_pass: Mutex::new(render_pass),
             pipeline: Mutex::new(pipeline),
             dynamic_state: Mutex::new(dynamic_state),
+            should_stop: Mutex::new(false),
         }
     }
     fn get_dynamic_state_ref(&self) -> &Mutex<DynamicState> {
@@ -567,6 +577,15 @@ void main() {
 
     fn get_render_pass(&self) -> &Mutex<Arc<dyn RenderPassAbstract + Sync + Send>> {
         self.render_pass.borrow()
+    }
+
+    fn stop(&self) {
+        let mut data = self.should_stop.lock().unwrap();
+        *data = true;
+    }
+
+    fn should_stop(&self) -> bool {
+        *self.should_stop.lock().unwrap()
     }
 
     fn create_framebuffers(
