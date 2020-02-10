@@ -101,7 +101,6 @@ mod tests {
     use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
     use vulkano::descriptor::PipelineLayoutAbstract;
     use vulkano::sync::GpuFuture;
-    use winit::os::unix::x11::util::PointerState;
 
     #[test]
     fn triangle() {
@@ -113,7 +112,7 @@ mod tests {
     #[test]
     fn mesh() {
         let (thread, win) = crate::window::main_loop::<DemoMeshRenderer, MeshFrame>();
-        thread.join().unwrap_err();
+        thread.join().unwrap_or(())
     }
 
     pub struct DemoMeshRenderer {
