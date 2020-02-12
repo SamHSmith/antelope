@@ -1,11 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use vulkano::command_buffer::{AutoCommandBuffer, CommandBuffer, CommandBufferExecFuture};
+    use vulkano::command_buffer::{AutoCommandBuffer, CommandBuffer};
     use vulkano::device::{Features, Queue};
     use vulkano::format::{ClearValue, Format};
-    use vulkano::image::{
-        AttachmentImage, Dimensions, ImageLayout, ImageUsage, StorageImage, SwapchainImage,
-    };
+    use vulkano::image::{AttachmentImage, Dimensions, ImageUsage, StorageImage, SwapchainImage};
     use vulkano::instance::{InstanceExtensions, QueueFamily};
 
     #[test]
@@ -78,14 +76,13 @@ mod tests {
     }
 
     use crate::camera::RenderCamera;
-    use crate::mesh::{Mesh, MeshCreateInfo, PostVertex, RenderInfo, Vertex};
+    use crate::mesh::{Mesh, MeshCreateInfo, MeshFactory, PostVertex, RenderInfo, Vertex};
     use crate::window::{DemoTriangleRenderer, Frame, TriangleFrame, Window};
-    use cgmath::{Deg, Euler, Matrix4, Quaternion, SquareMatrix, Vector3};
-    use gltf::mesh::Reader;
-    use gltf::Gltf;
-    use std::borrow::{Borrow, BorrowMut};
+    use cgmath::{Deg, Euler, Matrix4, Quaternion, Vector3};
+
+    use std::borrow::Borrow;
     use std::sync::{Arc, Mutex};
-    use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, DeviceLocalBuffer};
+    use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 
     use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
     use vulkano::device::{Device, DeviceExtensions};
@@ -96,12 +93,12 @@ mod tests {
     use vulkano::pipeline::viewport::Viewport;
     use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 
+    use conbox::PushData;
     use std::time::Duration;
-    use vulkano::descriptor::descriptor::DescriptorDesc;
+
     use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
     use vulkano::descriptor::PipelineLayoutAbstract;
     use vulkano::sync::GpuFuture;
-    use winit::os::unix::x11::util::PointerState;
 
     #[test]
     fn triangle() {
@@ -112,44 +109,10 @@ mod tests {
 
     #[test]
     fn mesh() {
-        let (thread, win) = crate::window::main_loop::<DemoMeshRenderer, MeshFrame>();
-        thread.join().unwrap_err();
-    }
+        let (thread, win) = crate::window::main_loop::<MeshRenderer, MeshFrame>();
 
-    pub struct DemoMeshRenderer {
-        render_info: RenderInfo,
-        render_pass: Mutex<Arc<dyn RenderPassAbstract + Sync + Send>>,
-        pipeline: [Arc<dyn GraphicsPipelineAbstract + Sync + Send>; 2],
-        pipeline_layout: [Arc<dyn PipelineLayoutAbstract + Send + Sync>; 2],
-        dynamic_state: Mutex<DynamicState>,
-        should_stop: Mutex<bool>,
-    }
-
-    struct MeshFrame {
-        framebuffer: Arc<dyn FramebufferAbstract + Send + Sync>,
-        albedobuffer: Arc<AttachmentImage>,
-        normalbuffer: Arc<AttachmentImage>,
-        depthbuffer: Arc<AttachmentImage>,
-    }
-
-    impl Frame for MeshFrame {
-        fn get_framebuffer(&self) -> &Arc<dyn FramebufferAbstract + Send + Sync> {
-            &self.framebuffer
-        }
-    }
-
-    impl Window<MeshFrame> for DemoMeshRenderer {
-        fn get_device_extensions(extensions: &mut DeviceExtensions) {
-            extensions.khr_storage_buffer_storage_class = true;
-        }
-
-        fn setup(
-            device: &Arc<Device>,
-            swapchain_format: vulkano::format::Format,
-            graphics_family: QueueFamily,
-            graphics_queue: &Arc<Queue>,
-        ) -> Self {
-            let verts = vec![
+        let meshinfo = MeshCreateInfo {
+            verticies: vec![
                 Vertex {
                     position: [-0.5, -0.9, -0.5],
                     colour: [1.0, 0.0, 0.0],
@@ -192,25 +155,65 @@ mod tests {
                     tangent: [1.0, 0.0, 0.0, 1.0],
                     texcoord: [0.0, 0.0],
                 },
-            ];
+            ],
+            indicies: vec![0, 1, 2, 3, 4, 5],
+        };
 
-            let (mesh, create_buff) = Mesh::create(
-                MeshCreateInfo {
-                    verticies: verts,
-                    indicies: vec![0, 1, 2, 3, 4, 5],
-                },
-                &device,
-                graphics_family,
-            );
+        let mesh = win.mesh_factory.create_mesh(meshinfo);
 
-            create_buff
-                .execute(graphics_queue.clone())
-                .unwrap()
-                .then_signal_fence_and_flush()
-                .unwrap()
-                .wait(None)
-                .unwrap();
+        win.render_info.push(RenderInfo {
+            meshes: vec![mesh.clone(), mesh.clone()],
+            mats: vec![
+                Matrix4::from_translation(Vector3 {
+                    x: 0.0,
+                    y: 2.0,
+                    z: 0.0,
+                }),
+                Matrix4::from_translation(Vector3 {
+                    x: 3.0,
+                    y: 2.0,
+                    z: 0.0,
+                }),
+            ],
+        });
 
+        thread.join().ok().unwrap();
+    }
+
+    pub struct MeshRenderer {
+        pub render_info: PushData<RenderInfo>,
+        pub mesh_factory: MeshFactory,
+        render_pass: Mutex<Arc<dyn RenderPassAbstract + Sync + Send>>,
+        pipeline: [Arc<dyn GraphicsPipelineAbstract + Sync + Send>; 2],
+        pipeline_layout: [Arc<dyn PipelineLayoutAbstract + Send + Sync>; 2],
+        dynamic_state: Mutex<DynamicState>,
+        should_stop: Mutex<bool>,
+    }
+
+    struct MeshFrame {
+        framebuffer: Arc<dyn FramebufferAbstract + Send + Sync>,
+        albedobuffer: Arc<AttachmentImage>,
+        normalbuffer: Arc<AttachmentImage>,
+        depthbuffer: Arc<AttachmentImage>,
+    }
+
+    impl Frame for MeshFrame {
+        fn get_framebuffer(&self) -> &Arc<dyn FramebufferAbstract + Send + Sync> {
+            &self.framebuffer
+        }
+    }
+
+    impl Window<MeshFrame> for MeshRenderer {
+        fn get_device_extensions(extensions: &mut DeviceExtensions) {
+            extensions.khr_storage_buffer_storage_class = true;
+        }
+
+        fn setup(
+            device: &Arc<Device>,
+            swapchain_format: vulkano::format::Format,
+            graphics_family: QueueFamily,
+            graphics_queue: &Arc<Queue>,
+        ) -> Self {
             let render_pass = Arc::new(
                 vulkano::ordered_passes_renderpass!(
                     device.clone(),
@@ -443,22 +446,9 @@ void main() {
                 reference: None,
             };
 
-            DemoMeshRenderer {
-                render_info: RenderInfo {
-                    meshes: vec![mesh.clone(), mesh.clone()],
-                    mats: vec![
-                        Matrix4::from_translation(Vector3 {
-                            x: 0.0,
-                            y: 2.0,
-                            z: 0.0,
-                        }),
-                        Matrix4::from_translation(Vector3 {
-                            x: 3.0,
-                            y: 2.0,
-                            z: 0.0,
-                        }),
-                    ],
-                },
+            MeshRenderer {
+                render_info: PushData::new(RenderInfo::empty()),
+                mesh_factory: MeshFactory::new(),
                 render_pass: Mutex::new(render_pass),
                 pipeline: [pipeline1.clone(), pipeline2.clone()],
                 pipeline_layout: [pipeline1.clone(), pipeline2.clone()],
@@ -551,12 +541,25 @@ void main() {
                 .collect::<Vec<_>>()
         }
 
+        fn pre_render_commands(
+            &self,
+            device: &Arc<Device>,
+            queue_family: QueueFamily,
+        ) -> Option<AutoCommandBuffer> {
+            Some(
+                self.mesh_factory
+                    .perform_mesh_creation(&device, queue_family),
+            )
+        }
+
         fn render(
             &self,
             device: &Arc<Device>,
             queue_family: QueueFamily,
             framebuffer: &MeshFrame,
         ) -> AutoCommandBuffer {
+            let info = self.render_info.get();
+
             // We now create a buffer that will store the shape of our triangle.
 
             // Specify the color to clear the framebuffer with i.e. blue
@@ -620,12 +623,12 @@ void main() {
             )
             .unwrap();
 
-            debug_assert_eq!(self.render_info.mats.len(), self.render_info.meshes.len()); //The code will still render if the assert fails. But this
+            debug_assert_eq!(info.mats.len(), info.meshes.len()); //The code will still render if the assert fails. But this
             let transforms = CpuAccessibleBuffer::from_iter(
                 //a good indication of a bug somewhere else in the code.
                 device.clone(),
                 BufferUsage::all(),
-                self.render_info.mats.clone().iter().cloned(),
+                info.mats.clone().iter().cloned(),
             )
             .unwrap();
 
@@ -641,24 +644,33 @@ void main() {
 
             let mut command_buffer =
                 AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue_family)
-                    .unwrap()
-                    // Before we can draw, we have to *enter a render pass*. There are two methods to do
-                    // this: `draw_inline` and `draw_secondary`. The latter is a bit more advanced and is
-                    // not covered here.
-                    //
-                    // The third parameter builds the list of values to clear the attachments with. The API
-                    // is similar to the list of attachments when building the framebuffers, except that
-                    // only the attachments that use `load: Clear` appear in the list.
-                    .begin_render_pass(framebuffer.framebuffer.clone(), false, clear_values)
                     .unwrap();
 
-            for i in 0..self.render_info.meshes.len() {
+            // Before we can draw, we have to *enter a render pass*. There are two methods to do
+            // this: `draw_inline` and `draw_secondary`. The latter is a bit more advanced and is
+            // not covered here.
+            //
+            // The third parameter builds the list of values to clear the attachments with. The API
+            // is similar to the list of attachments when building the framebuffers, except that
+            // only the attachments that use `load: Clear` appear in the list.
+            command_buffer = command_buffer
+                .begin_render_pass(framebuffer.framebuffer.clone(), false, clear_values)
+                .unwrap();
+
+            for i in 0..info.meshes.len() {
+                let mesh = info.meshes[i].get_raw();
+                if mesh.is_none() {
+                    println!("NAN");
+                    continue;
+                }
+                let meshraw = mesh.unwrap();
+
                 command_buffer = command_buffer
                     .draw_indexed(
                         self.pipeline[0].clone(),
                         &self.dynamic_state.lock().unwrap(),
-                        vec![self.render_info.meshes[i].vertbuff.clone()],
-                        self.render_info.meshes[i].indbuff.clone(),
+                        vec![meshraw.vertbuff.clone()],
+                        meshraw.indbuff.clone(),
                         descriptor_set1.clone(),
                         i,
                     )
@@ -679,7 +691,6 @@ void main() {
                 .end_render_pass()
                 .unwrap();
 
-            // Finish building the command buffer by calling `build`.
             command_buffer.build().unwrap()
         }
     }

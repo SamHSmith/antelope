@@ -1,6 +1,9 @@
 use cgmath::Matrix4;
+
 use std::ops::BitOr;
-use std::sync::Arc;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, Mutex};
+
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, DeviceLocalBuffer};
 use vulkano::command_buffer::{AutoCommandBuffer, AutoCommandBufferBuilder};
 use vulkano::device::Device;
@@ -24,9 +27,25 @@ pub struct MeshCreateInfo {
     pub verticies: Vec<Vertex>,
 }
 
-pub struct Mesh {
+pub struct RawMesh {
     pub indbuff: Arc<DeviceLocalBuffer<[u32]>>,
     pub vertbuff: Arc<DeviceLocalBuffer<[Vertex]>>,
+}
+
+pub struct Mesh {
+    raw: Mutex<Option<RawMesh>>,
+}
+impl Mesh {
+    #[inline]
+    pub fn get_raw(&self) -> Option<RawMesh> {
+        let lock = self.raw.lock().unwrap();
+
+        return if lock.is_none() {
+            None
+        } else {
+            Some(lock.as_ref().unwrap().clone())
+        };
+    }
 }
 
 pub struct RenderInfo {
@@ -34,12 +53,21 @@ pub struct RenderInfo {
     pub mats: Vec<Matrix4<f64>>,
 }
 
-impl Mesh {
+impl RenderInfo {
+    pub fn empty() -> Self {
+        RenderInfo {
+            meshes: Vec::new(),
+            mats: Vec::new(),
+        }
+    }
+}
+
+impl RawMesh {
     pub fn create(
         info: MeshCreateInfo,
         device: &Arc<Device>,
         queue_family: QueueFamily,
-    ) -> (Arc<Mesh>, AutoCommandBuffer) {
+    ) -> (RawMesh, AutoCommandBuffer) {
         let i = CpuAccessibleBuffer::from_iter(
             device.clone(),
             BufferUsage::transfer_source(),
@@ -78,11 +106,81 @@ impl Mesh {
             .unwrap();
 
         (
-            Arc::new(Mesh {
+            RawMesh {
                 indbuff: di,
                 vertbuff: dv,
-            }),
+            },
             cmd.build().unwrap(),
         )
+    }
+}
+
+impl Clone for RawMesh {
+    fn clone(&self) -> Self {
+        RawMesh {
+            vertbuff: self.vertbuff.clone(),
+            indbuff: self.indbuff.clone(),
+        }
+    }
+}
+
+pub struct MeshFactory {
+    sender: Mutex<Sender<(Arc<Mesh>, MeshCreateInfo)>>,
+    receiver: Mutex<Receiver<(Arc<Mesh>, MeshCreateInfo)>>,
+}
+
+impl MeshFactory {
+    pub fn new() -> Self {
+        let (tx, rx) = channel::<(Arc<Mesh>, MeshCreateInfo)>();
+
+        MeshFactory {
+            sender: Mutex::new(tx),
+            receiver: Mutex::new(rx),
+        }
+    }
+
+    pub fn create_mesh(&self, info: MeshCreateInfo) -> Arc<Mesh> {
+        let mesh = Arc::new(Mesh {
+            raw: Mutex::new(Option::None),
+        });
+        self.sender
+            .lock()
+            .unwrap()
+            .send((mesh.clone(), info))
+            .unwrap();
+        mesh
+    }
+
+    pub fn perform_mesh_creation(
+        &self,
+        device: &Arc<Device>,
+        queue_family: QueueFamily,
+    ) -> AutoCommandBuffer {
+        let mut buffers = Vec::<AutoCommandBuffer>::new();
+        let receiver = self.receiver.lock().unwrap();
+
+        loop {
+            let recv = receiver.try_recv();
+            if recv.is_err() {
+                //TODO timeout maybe???
+                break;
+            }
+            let (mesh, info) = recv.unwrap();
+
+            let (raw, create_buff) = RawMesh::create(info, &device, queue_family);
+
+            buffers.push(create_buff);
+            let mut reff = mesh.raw.lock().unwrap();
+            *reff = Some(raw);
+        }
+        let mut builder =
+            AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue_family)
+                .unwrap();
+        unsafe {
+            for buff in buffers {
+                builder = builder.execute_commands(buff).unwrap();
+            }
+        }
+        builder.build().unwrap()
     }
 }

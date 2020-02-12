@@ -13,6 +13,7 @@ vulkano-shaders = "0.16.0"
 winit = "0.19"
 image = "0.21"
 cgmath = "0.17.0"
+conbox = "0.1.0"
 
 [dependencies.gltf]
 version = "0.15"

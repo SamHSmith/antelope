@@ -17,13 +17,12 @@ use vulkano_win::VkSurfaceBuild;
 
 use winit::{Event, EventsLoop, WindowBuilder, WindowEvent};
 
-use std::borrow::{Borrow, BorrowMut};
+use std::borrow::Borrow;
 use std::clone::Clone;
-use std::intrinsics::transmute;
-use std::ops::DerefMut;
+
 use std::sync::{mpsc, Arc, Mutex};
-use std::thread::{JoinHandle, Thread};
-use std::time::{Duration, Instant};
+use std::thread::JoinHandle;
+use std::time::Instant;
 
 #[derive(Default, Debug, Clone)]
 struct TestVertex {
@@ -301,35 +300,61 @@ where
                     Err(err) => panic!("{:?}", err),
                 };
 
-            let future = previous_frame_end
-                .join(acquire_future)
-                .then_execute(
-                    queue.clone(),
-                    win.render(&device, queue_family, &framebuffers[image_num]),
-                )
-                .unwrap()
-                // The color output is now expected to contain our triangle. But in order to show it on
-                // the screen, we have to *present* the image by calling `present`.
-                //
-                // This function does not actually present the image immediately. Instead it submits a
-                // present command at the end of the queue. This means that it will only be presented once
-                // the GPU has finished executing the command buffer that draws the triangle.
-                .then_swapchain_present(queue.clone(), swapchain.clone(), image_num)
-                .then_signal_fence_and_flush();
+            let pre_cmd = win.pre_render_commands(&device, queue_family);
 
-            match future {
-                Ok(future) => {
-                    // This wait is required when using NVIDIA or running on macOS. See https://github.com/vulkano-rs/vulkano/issues/1247
-                    future.wait(None).unwrap();
-                    previous_frame_end = Box::new(future) as Box<_>;
+            let f1 = previous_frame_end.join(acquire_future);
+
+            if pre_cmd.is_some() {
+                let future = f1
+                    .then_execute(queue.clone(), pre_cmd.unwrap())
+                    .unwrap()
+                    .then_execute(
+                        queue.clone(),
+                        win.render(&device, queue_family, &framebuffers[image_num]),
+                    )
+                    .unwrap()
+                    .then_swapchain_present(queue.clone(), swapchain.clone(), image_num)
+                    .then_signal_fence_and_flush();
+
+                match future {
+                    Ok(future) => {
+                        // This wait is required when using NVIDIA or running on macOS. See https://github.com/vulkano-rs/vulkano/issues/1247
+                        future.wait(None).unwrap();
+                        previous_frame_end = Box::new(future) as Box<_>;
+                    }
+                    Err(FlushError::OutOfDate) => {
+                        recreate_swapchain = true;
+                        previous_frame_end = Box::new(sync::now(device.clone())) as Box<_>;
+                    }
+                    Err(e) => {
+                        println!("{:?}", e);
+                        previous_frame_end = Box::new(sync::now(device.clone())) as Box<_>;
+                    }
                 }
-                Err(FlushError::OutOfDate) => {
-                    recreate_swapchain = true;
-                    previous_frame_end = Box::new(sync::now(device.clone())) as Box<_>;
-                }
-                Err(e) => {
-                    println!("{:?}", e);
-                    previous_frame_end = Box::new(sync::now(device.clone())) as Box<_>;
+            } else {
+                let future = f1
+                    .then_execute(
+                        queue.clone(),
+                        win.render(&device, queue_family, &framebuffers[image_num]),
+                    )
+                    .unwrap()
+                    .then_swapchain_present(queue.clone(), swapchain.clone(), image_num)
+                    .then_signal_fence_and_flush();
+
+                match future {
+                    Ok(future) => {
+                        // This wait is required when using NVIDIA or running on macOS. See https://github.com/vulkano-rs/vulkano/issues/1247
+                        future.wait(None).unwrap();
+                        previous_frame_end = Box::new(future) as Box<_>;
+                    }
+                    Err(FlushError::OutOfDate) => {
+                        recreate_swapchain = true;
+                        previous_frame_end = Box::new(sync::now(device.clone())) as Box<_>;
+                    }
+                    Err(e) => {
+                        println!("{:?}", e);
+                        previous_frame_end = Box::new(sync::now(device.clone())) as Box<_>;
+                    }
                 }
             }
 
@@ -410,6 +435,14 @@ where
         device: &Arc<Device>,
         images: &[Arc<SwapchainImage<winit::Window>>],
     ) -> Vec<F>;
+
+    fn pre_render_commands(
+        &self,
+        _device: &Arc<Device>,
+        _queue_family: QueueFamily,
+    ) -> Option<AutoCommandBuffer> {
+        None
+    }
 
     fn render(
         &self,
