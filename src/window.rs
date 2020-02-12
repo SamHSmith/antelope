@@ -1,6 +1,6 @@
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::command_buffer::{AutoCommandBuffer, AutoCommandBufferBuilder, DynamicState};
-use vulkano::device::{Device, DeviceExtensions, Queue};
+use vulkano::device::{Device, DeviceExtensions};
 use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass};
 use vulkano::image::{AttachmentImage, SwapchainImage};
 use vulkano::instance::{Instance, PhysicalDevice, QueueFamily};
@@ -229,12 +229,7 @@ where
         // that, we store the submission of the previous frame here.
         let mut previous_frame_end = Box::new(sync::now(device.clone())) as Box<dyn GpuFuture>;
 
-        let win = Arc::new(Window::setup(
-            &device,
-            swapchain.format(),
-            queue_family,
-            &queue,
-        ));
+        let win = Arc::new(Window::setup(&device, swapchain.format()));
 
         tx.send(win.clone()).unwrap();
 
@@ -418,12 +413,7 @@ where
     */
     fn get_device_extensions(_extensions: &mut DeviceExtensions) {}
 
-    fn setup(
-        device: &Arc<Device>,
-        swapchain_format: vulkano::format::Format,
-        graphics_family: QueueFamily,
-        graphics_queue: &Arc<Queue>,
-    ) -> Self;
+    fn setup(device: &Arc<Device>, swapchain_format: vulkano::format::Format) -> Self;
 
     fn get_dynamic_state_ref(&self) -> &Mutex<DynamicState>;
     fn get_render_pass(&self) -> &Mutex<Arc<dyn RenderPassAbstract + Sync + Send>>;
@@ -471,12 +461,7 @@ impl Frame for TriangleFrame {
 }
 
 impl Window<TriangleFrame> for DemoTriangleRenderer {
-    fn setup(
-        device: &Arc<Device>,
-        swapchain_format: vulkano::format::Format,
-        _graphics_family: QueueFamily,
-        _graphics_queue: &Arc<Queue>,
-    ) -> Self {
+    fn setup(device: &Arc<Device>, swapchain_format: vulkano::format::Format) -> Self {
         let vertex_buffer = {
             CpuAccessibleBuffer::<[TestVertex]>::from_iter(
                 device.clone(),

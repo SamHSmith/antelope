@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use vulkano::command_buffer::{AutoCommandBuffer, CommandBuffer};
-    use vulkano::device::{Features, Queue};
+    use vulkano::device::Features;
     use vulkano::format::{ClearValue, Format};
     use vulkano::image::{AttachmentImage, Dimensions, ImageUsage, StorageImage, SwapchainImage};
     use vulkano::instance::{InstanceExtensions, QueueFamily};
@@ -76,7 +76,7 @@ mod tests {
     }
 
     use crate::camera::RenderCamera;
-    use crate::mesh::{Mesh, MeshCreateInfo, MeshFactory, PostVertex, RenderInfo, Vertex};
+    use crate::mesh::{MeshCreateInfo, MeshFactory, PostVertex, RenderInfo, Vertex};
     use crate::window::{DemoTriangleRenderer, Frame, TriangleFrame, Window};
     use cgmath::{Deg, Euler, Matrix4, Quaternion, Vector3};
 
@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn triangle() {
-        let (thread, win) = crate::window::main_loop::<DemoTriangleRenderer, TriangleFrame>();
+        let (_thread, win) = crate::window::main_loop::<DemoTriangleRenderer, TriangleFrame>();
         std::thread::sleep(Duration::new(2, 0));
         win.stop();
     }
@@ -222,12 +222,7 @@ mod tests {
             extensions.khr_storage_buffer_storage_class = true;
         }
 
-        fn setup(
-            device: &Arc<Device>,
-            swapchain_format: vulkano::format::Format,
-            graphics_family: QueueFamily,
-            graphics_queue: &Arc<Queue>,
-        ) -> Self {
+        fn setup(device: &Arc<Device>, swapchain_format: vulkano::format::Format) -> Self {
             let render_pass = Arc::new(
                 vulkano::ordered_passes_renderpass!(
                     device.clone(),
