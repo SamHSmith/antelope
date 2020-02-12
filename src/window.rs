@@ -8,7 +8,7 @@ use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 use vulkano::swapchain;
 use vulkano::swapchain::{
-    AcquireError, PresentMode, SurfaceTransform, Swapchain, SwapchainCreationError,
+    AcquireError, PresentMode, Surface, SurfaceTransform, Swapchain, SwapchainCreationError,
 };
 use vulkano::sync;
 use vulkano::sync::{FlushError, GpuFuture};
@@ -228,7 +228,7 @@ where
         // that, we store the submission of the previous frame here.
         let mut previous_frame_end = Box::new(sync::now(device.clone())) as Box<dyn GpuFuture>;
 
-        let win = Arc::new(Window::setup(&device, swapchain.format()));
+        let win = Arc::new(Window::setup(&device, swapchain.format(), surface.clone()));
 
         tx.send(win.clone()).unwrap();
 
@@ -410,10 +410,20 @@ pub trait Window: Send + Sync {
     */
     fn get_device_extensions(_extensions: &mut DeviceExtensions) {}
 
-    fn setup(device: &Arc<Device>, swapchain_format: vulkano::format::Format) -> Self;
+    fn setup(
+        device: &Arc<Device>,
+        swapchain_format: vulkano::format::Format,
+        surface: Arc<Surface<winit::Window>>,
+    ) -> Self;
 
     fn get_dynamic_state_ref(&self) -> &Mutex<DynamicState>;
     fn get_render_pass(&self) -> &Mutex<Arc<dyn RenderPassAbstract + Sync + Send>>;
+    fn get_surface_ref(&self) -> &Arc<Surface<winit::Window>>;
+
+    fn get_window_ref(&self) -> &winit::Window {
+        self.get_surface_ref().window()
+    }
+
     fn stop(&self);
     fn should_stop(&self) -> bool;
 
@@ -445,6 +455,7 @@ pub struct DemoTriangleRenderer {
     pipeline: Mutex<Arc<dyn GraphicsPipelineAbstract + Sync + Send>>,
     dynamic_state: Mutex<DynamicState>,
     should_stop: Mutex<bool>,
+    surface: Arc<Surface<winit::Window>>,
 }
 
 pub struct TriangleFrame {
@@ -460,7 +471,11 @@ impl Frame for TriangleFrame {
 impl Window for DemoTriangleRenderer {
     type Frametype = TriangleFrame;
 
-    fn setup(device: &Arc<Device>, swapchain_format: vulkano::format::Format) -> Self {
+    fn setup(
+        device: &Arc<Device>,
+        swapchain_format: vulkano::format::Format,
+        surface: Arc<Surface<winit::Window>>,
+    ) -> Self {
         let vertex_buffer = {
             CpuAccessibleBuffer::<[TestVertex]>::from_iter(
                 device.clone(),
@@ -586,6 +601,7 @@ void main() {
             pipeline: Mutex::new(pipeline),
             dynamic_state: Mutex::new(dynamic_state),
             should_stop: Mutex::new(false),
+            surface,
         }
     }
     fn get_dynamic_state_ref(&self) -> &Mutex<DynamicState> {
@@ -594,6 +610,10 @@ void main() {
 
     fn get_render_pass(&self) -> &Mutex<Arc<dyn RenderPassAbstract + Sync + Send>> {
         self.render_pass.borrow()
+    }
+
+    fn get_surface_ref(&self) -> &Arc<Surface<winit::Window>> {
+        &self.surface
     }
 
     fn stop(&self) {

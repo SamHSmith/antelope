@@ -98,6 +98,7 @@ mod tests {
 
     use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
     use vulkano::descriptor::PipelineLayoutAbstract;
+    use vulkano::swapchain::Surface;
     use vulkano::sync::GpuFuture;
 
     #[test]
@@ -181,6 +182,16 @@ mod tests {
             camera: cam,
         });
 
+        std::thread::sleep(Duration::new(15, 0));
+
+        win.get_window_ref().set_decorations(false);
+        win.get_window_ref()
+            .set_fullscreen(Some(win.get_window_ref().get_current_monitor()));
+
+        std::thread::sleep(Duration::new(15, 0));
+
+        win.stop();
+
         thread.join().ok().unwrap();
     }
 
@@ -192,6 +203,7 @@ mod tests {
         pipeline_layout: [Arc<dyn PipelineLayoutAbstract + Send + Sync>; 2],
         dynamic_state: Mutex<DynamicState>,
         should_stop: Mutex<bool>,
+        surface: Arc<Surface<winit::Window>>,
     }
 
     pub struct MeshFrame {
@@ -214,7 +226,11 @@ mod tests {
             extensions.khr_storage_buffer_storage_class = true;
         }
 
-        fn setup(device: &Arc<Device>, swapchain_format: vulkano::format::Format) -> Self {
+        fn setup(
+            device: &Arc<Device>,
+            swapchain_format: vulkano::format::Format,
+            surface: Arc<Surface<winit::Window>>,
+        ) -> Self {
             let render_pass = Arc::new(
                 vulkano::ordered_passes_renderpass!(
                     device.clone(),
@@ -456,6 +472,7 @@ void main() {
                 pipeline_layout: [pipeline1.clone(), pipeline2.clone()],
                 dynamic_state: Mutex::new(dynamic_state),
                 should_stop: Mutex::new(false),
+                surface,
             }
         }
 
@@ -465,6 +482,10 @@ void main() {
 
         fn get_render_pass(&self) -> &Mutex<Arc<dyn RenderPassAbstract + Sync + Send>> {
             self.render_pass.borrow()
+        }
+
+        fn get_surface_ref(&self) -> &Arc<Surface<winit::Window>> {
+            &self.surface
         }
 
         fn stop(&self) {
