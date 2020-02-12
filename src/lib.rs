@@ -102,14 +102,14 @@ mod tests {
 
     #[test]
     fn triangle() {
-        let (_thread, win) = crate::window::main_loop::<DemoTriangleRenderer, TriangleFrame>();
+        let (_thread, win) = crate::window::main_loop::<DemoTriangleRenderer>();
         std::thread::sleep(Duration::new(2, 0));
         win.stop();
     }
 
     #[test]
     fn mesh() {
-        let (thread, win) = crate::window::main_loop::<MeshRenderer, MeshFrame>();
+        let (thread, win) = crate::window::main_loop::<MeshRenderer>();
 
         let meshinfo = MeshCreateInfo {
             verticies: vec![
@@ -194,7 +194,7 @@ mod tests {
         should_stop: Mutex<bool>,
     }
 
-    struct MeshFrame {
+    pub struct MeshFrame {
         framebuffer: Arc<dyn FramebufferAbstract + Send + Sync>,
         albedobuffer: Arc<AttachmentImage>,
         normalbuffer: Arc<AttachmentImage>,
@@ -207,7 +207,9 @@ mod tests {
         }
     }
 
-    impl Window<MeshFrame> for MeshRenderer {
+    impl Window for MeshRenderer {
+        type Frametype = MeshFrame;
+
         fn get_device_extensions(extensions: &mut DeviceExtensions) {
             extensions.khr_storage_buffer_storage_class = true;
         }

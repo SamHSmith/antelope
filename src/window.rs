@@ -29,10 +29,9 @@ struct TestVertex {
     pub position: [f32; 2],
 }
 
-pub fn main_loop<Window: 'static, F>() -> (JoinHandle<()>, Arc<Window>)
+pub fn main_loop<Window: 'static>() -> (JoinHandle<()>, Arc<Window>)
 where
-    F: Frame,
-    Window: crate::window::Window<F>,
+    Window: crate::window::Window,
 {
     let (tx, rx) = mpsc::channel::<Arc<Window>>();
 
@@ -403,10 +402,8 @@ pub trait Frame {
     fn get_framebuffer(&self) -> &Arc<dyn FramebufferAbstract + Send + Sync>;
 }
 
-pub trait Window<F>: Send + Sync
-where
-    F: Frame,
-{
+pub trait Window: Send + Sync {
+    type Frametype: Frame;
     /*
     Used to request for device extensions.
     TODO Add fail case.
@@ -424,7 +421,7 @@ where
         &self,
         device: &Arc<Device>,
         images: &[Arc<SwapchainImage<winit::Window>>],
-    ) -> Vec<F>;
+    ) -> Vec<Self::Frametype>;
 
     fn pre_render_commands(
         &self,
@@ -438,7 +435,7 @@ where
         &self,
         device: &Arc<Device>,
         queue_family: QueueFamily,
-        framebuffer: &F,
+        framebuffer: &Self::Frametype,
     ) -> AutoCommandBuffer;
 }
 
@@ -460,7 +457,9 @@ impl Frame for TriangleFrame {
     }
 }
 
-impl Window<TriangleFrame> for DemoTriangleRenderer {
+impl Window for DemoTriangleRenderer {
+    type Frametype = TriangleFrame;
+
     fn setup(device: &Arc<Device>, swapchain_format: vulkano::format::Format) -> Self {
         let vertex_buffer = {
             CpuAccessibleBuffer::<[TestVertex]>::from_iter(
