@@ -13,7 +13,7 @@ use vulkano::instance::QueueFamily;
 #[derive(Default, Debug, Clone)]
 pub struct Vertex {
     pub position: [f32; 3],
-    pub colour: [f32; 3],
+    pub colour: [f32; 4],
     pub normal: [f32; 3],
     pub tangent: [f32; 4],
     pub texcoord: [f32; 2],

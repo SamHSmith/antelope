@@ -78,7 +78,7 @@ mod tests {
     use crate::camera::RenderCamera;
     use crate::mesh::{MeshCreateInfo, MeshFactory, PostVertex, RenderInfo, Vertex};
     use crate::window::{DemoTriangleRenderer, Frame, TriangleFrame, Window};
-    use cgmath::{Deg, Euler, Matrix4, Quaternion, Vector3};
+    use cgmath::{Matrix4, Vector3};
 
     use std::borrow::Borrow;
     use std::sync::{Arc, Mutex};
@@ -115,42 +115,42 @@ mod tests {
             verticies: vec![
                 Vertex {
                     position: [-0.5, -0.9, -0.5],
-                    colour: [1.0, 0.0, 0.0],
+                    colour: [1.0, 0.0, 0.0, 1.0],
                     normal: [1.0, 0.0, 0.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
                     texcoord: [0.0, 0.0],
                 },
                 Vertex {
                     position: [0.0, 0.5, -0.5],
-                    colour: [0.0, 1.0, 0.0],
+                    colour: [0.0, 1.0, 0.0, 1.0],
                     normal: [1.0, 0.0, 0.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
                     texcoord: [0.0, 0.0],
                 },
                 Vertex {
                     position: [0.25, -0.1, -0.5],
-                    colour: [0.0, 0.0, 1.0],
+                    colour: [0.0, 0.0, 1.0, 1.0],
                     normal: [1.0, 0.0, 0.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
                     texcoord: [0.0, 0.0],
                 },
                 Vertex {
                     position: [-1.5, -0.9, -0.9],
-                    colour: [1.0, 1.0, 0.0],
+                    colour: [1.0, 1.0, 0.0, 1.0],
                     normal: [1.0, 1.0, 0.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
                     texcoord: [0.0, 0.0],
                 },
                 Vertex {
                     position: [-1.0, 0.5, -0.9],
-                    colour: [1.0, 1.0, 0.0],
+                    colour: [1.0, 1.0, 0.0, 1.0],
                     normal: [1.0, 1.0, 0.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
                     texcoord: [0.0, 0.0],
                 },
                 Vertex {
                     position: [0.2, -0.1, -0.9],
-                    colour: [1.0, 1.0, 0.0],
+                    colour: [1.0, 1.0, 0.0, 1.0],
                     normal: [1.0, 0.0, 0.0],
                     tangent: [1.0, 0.0, 0.0, 1.0],
                     texcoord: [0.0, 0.0],
@@ -161,18 +161,8 @@ mod tests {
 
         let mesh = win.mesh_factory.create_mesh(meshinfo);
 
-        let cam = RenderCamera {
-            position: Vector3 {
-                x: 0.0,
-                y: 0.0,
-                z: 5.0,
-            },
-            rotation: Quaternion::from(Euler::new(Deg(0.0), Deg(0.0), Deg(0.0))),
-            aspect: 1.0,
-            fov: 90.0,
-            far: 10000.0,
-            near: 0.1,
-        };
+        let mut cam = RenderCamera::new();
+        cam.position.z = 5.0;
 
         win.render_info.push(RenderInfo {
             meshes: vec![mesh.clone(), mesh.clone()],
@@ -297,12 +287,12 @@ mod tests {
                     src: "
 #version 450
 layout(location = 0) in vec3 position;
-layout(location = 1) in vec3 colour;
+layout(location = 1) in vec4 colour;
 layout(location = 2) in vec3 normal;
 layout(location = 3) in vec4 tangent;
 layout(location = 4) in vec2 texcoord;
 
-layout(location = 0) out vec3 frag_colour;
+layout(location = 0) out vec4 frag_colour;
 layout(location = 1) out vec3 frag_normal;
 layout(location = 2) out vec4 frag_tangent;
 layout(location = 3) out vec2 frag_texcoord;
@@ -337,7 +327,7 @@ void main() {
                     ty: "fragment",
                     src: "
 #version 450
-layout(location = 0) in vec3 colour;
+layout(location = 0) in vec4 colour;
 layout(location = 1) in vec3 normal;
 layout(location = 2) in vec4 tangent;
 layout(location = 3) in vec2 texcoord;
@@ -346,7 +336,8 @@ layout(location = 0) out vec4 f_colour;
 layout(location = 1) out vec4 f_normal;
 
 void main() {
-    f_colour = vec4(colour, 1.0);
+    vec3 albedo=vec3(0,0,0);
+    f_colour = vec4(((albedo*(1-colour.w))+vec3(colour.w))*colour.xyz, 1.0);
     f_normal = vec4(normal, 0.0);
 }
 "
@@ -412,7 +403,7 @@ void main() {
     if(subpassLoad(u_depth).x==1)
         discard;
 
-    f_colour = vec4(subpassLoad(u_normal).xyz, 1.0);
+    f_colour = vec4(subpassLoad(u_diffuse).xyz, 1.0);
 }
 "
                 }

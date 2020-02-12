@@ -1,4 +1,4 @@
-use cgmath::{Deg, Matrix4, PerspectiveFov, Quaternion, SquareMatrix, Vector3};
+use cgmath::{Deg, Euler, Matrix4, PerspectiveFov, Quaternion, SquareMatrix, Vector3};
 
 #[derive(Debug, Clone)]
 pub struct RenderCamera {
@@ -26,5 +26,20 @@ impl RenderCamera {
         mat = mat * Matrix4::from_translation(-self.position);
 
         mat
+    }
+
+    pub fn new() -> RenderCamera {
+        RenderCamera {
+            position: Vector3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            rotation: Quaternion::from(Euler::new(Deg(0.0), Deg(0.0), Deg(0.0))),
+            aspect: 1.0,
+            fov: 90.0,
+            far: 100000.0,
+            near: 0.1,
+        }
     }
 }
