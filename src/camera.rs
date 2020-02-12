@@ -1,5 +1,6 @@
 use cgmath::{Deg, Matrix4, PerspectiveFov, Quaternion, SquareMatrix, Vector3};
 
+#[derive(Debug, Clone)]
 pub struct RenderCamera {
     pub position: Vector3<f64>,
     pub rotation: Quaternion<f64>,

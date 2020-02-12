@@ -1,9 +1,10 @@
-use cgmath::Matrix4;
+use cgmath::{Deg, Euler, Matrix4, Quaternion, Vector3};
 
 use std::ops::BitOr;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
+use crate::camera::RenderCamera;
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, DeviceLocalBuffer};
 use vulkano::command_buffer::{AutoCommandBuffer, AutoCommandBufferBuilder};
 use vulkano::device::Device;
@@ -51,6 +52,7 @@ impl Mesh {
 pub struct RenderInfo {
     pub meshes: Vec<Arc<Mesh>>,
     pub mats: Vec<Matrix4<f64>>,
+    pub camera: RenderCamera,
 }
 
 impl RenderInfo {
@@ -58,6 +60,18 @@ impl RenderInfo {
         RenderInfo {
             meshes: Vec::new(),
             mats: Vec::new(),
+            camera: RenderCamera {
+                position: Vector3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 5.0,
+                },
+                rotation: Quaternion::from(Euler::new(Deg(0.0), Deg(0.0), Deg(0.0))),
+                aspect: 1.0,
+                fov: 90.0,
+                far: 10000.0,
+                near: 0.1,
+            },
         }
     }
 }

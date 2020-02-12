@@ -161,6 +161,19 @@ mod tests {
 
         let mesh = win.mesh_factory.create_mesh(meshinfo);
 
+        let cam = RenderCamera {
+            position: Vector3 {
+                x: 0.0,
+                y: 0.0,
+                z: 5.0,
+            },
+            rotation: Quaternion::from(Euler::new(Deg(0.0), Deg(0.0), Deg(0.0))),
+            aspect: 1.0,
+            fov: 90.0,
+            far: 10000.0,
+            near: 0.1,
+        };
+
         win.render_info.push(RenderInfo {
             meshes: vec![mesh.clone(), mesh.clone()],
             mats: vec![
@@ -175,6 +188,7 @@ mod tests {
                     z: 0.0,
                 }),
             ],
+            camera: cam,
         });
 
         thread.join().ok().unwrap();
@@ -570,18 +584,7 @@ void main() {
                 [0.0, 0.0, 0.0, 0.0].into(),
             ];
 
-            let cam = RenderCamera {
-                position: Vector3 {
-                    x: 0.0,
-                    y: 0.9,
-                    z: 5.5,
-                },
-                rotation: Quaternion::from(Euler::new(Deg(0.0), Deg(0.0), Deg(0.0))),
-                aspect: 1.0,
-                fov: 90.0,
-                far: 10000.0,
-                near: 0.1,
-            };
+            let cam = info.camera.clone();
 
             let post_area = CpuAccessibleBuffer::from_iter(
                 device.clone(),
@@ -609,12 +612,6 @@ void main() {
                     .unwrap()
                     .build()
                     .unwrap();
-
-            let mat: Matrix4<f64> = Matrix4::from_translation(Vector3 {
-                x: 0.0,
-                y: 4.0,
-                z: 0.0,
-            });
 
             let camera_uniform = CpuAccessibleBuffer::from_iter(
                 device.clone(),
