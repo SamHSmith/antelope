@@ -360,14 +360,11 @@ where
             // wait would happen. Blocking may be the desired behavior, but if you don't want to
             // block you should spawn a separate thread dedicated to submissions.
 
-            // Handling the window events in order to close the program when the user wants to close
-            // it.
-            let mut done = false;
             events_loop.poll_events(|ev| match ev {
                 Event::WindowEvent {
                     event: WindowEvent::CloseRequested,
                     ..
-                } => done = true,
+                } => win.stop(),
                 Event::WindowEvent {
                     event: WindowEvent::Resized(_),
                     ..
@@ -378,11 +375,8 @@ where
                 } => win.push_event(event),
                 _ => (),
             });
-            if win.should_stop() {
-                done = true;
-            }
 
-            if done {
+            if win.should_stop() {
                 return;
             }
 

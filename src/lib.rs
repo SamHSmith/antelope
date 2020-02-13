@@ -92,6 +92,8 @@ mod tests {
     use crate::MeshRenderer;
 
     use vulkano::sync::GpuFuture;
+    use winit::ElementState;
+    use winit::WindowEvent::KeyboardInput;
 
     #[test]
     fn triangle() {
@@ -174,15 +176,27 @@ mod tests {
             camera: cam,
         });
 
-        std::thread::sleep(Duration::new(15, 0));
-
-        win.get_window_ref().set_decorations(false);
-        win.get_window_ref()
-            .set_fullscreen(Some(win.get_window_ref().get_current_monitor()));
-
-        std::thread::sleep(Duration::new(15, 0));
-
-        win.stop();
+        while !win.should_stop() {
+            for e in win.get_events() {
+                println!("yea {:?}", e);
+                match e {
+                    KeyboardInput { input, .. } => {
+                        if input.scancode == 57 && input.state == ElementState::Pressed {
+                            if win.get_window_ref().get_fullscreen().is_some() {
+                                win.get_window_ref().set_decorations(true);
+                                win.get_window_ref().set_fullscreen(None);
+                            } else {
+                                win.get_window_ref().set_decorations(false);
+                                win.get_window_ref().set_fullscreen(Some(
+                                    win.get_window_ref().get_current_monitor(),
+                                ));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         thread.join().ok().unwrap();
     }
