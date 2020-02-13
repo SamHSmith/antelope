@@ -372,6 +372,10 @@ where
                     event: WindowEvent::Resized(_),
                     ..
                 } => recreate_swapchain = true,
+                Event::WindowEvent {
+                    event,
+                    window_id: _window_id,
+                } => win.push_event(event),
                 _ => (),
             });
             if win.should_stop() {
@@ -422,6 +426,10 @@ pub trait Window: Send + Sync {
 
     fn get_window_ref(&self) -> &winit::Window {
         self.get_surface_ref().window()
+    }
+
+    fn push_event(&self, _event: WindowEvent) {
+        println!("events have not been implemented on this Window yet. If you want this functionality implement antelope::window::Window::push_event")
     }
 
     fn stop(&self);
