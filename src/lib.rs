@@ -184,15 +184,9 @@ mod tests {
                         if input.scancode == 57 && input.state == ElementState::Pressed {
                             let winref = win.get_window_ref();
                             if win.get_window_ref().get_fullscreen().is_some() {
-                                winref.hide();
-                                winref.set_decorations(true);
                                 winref.set_fullscreen(None);
-                                winref.show();
                             } else {
-                                winref.hide();
-                                winref.set_decorations(false);
                                 winref.set_fullscreen(Some(winref.get_current_monitor()));
-                                winref.show();
                             }
                         }
                     }
