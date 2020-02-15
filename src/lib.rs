@@ -182,14 +182,17 @@ mod tests {
                 match e {
                     KeyboardInput { input, .. } => {
                         if input.scancode == 57 && input.state == ElementState::Pressed {
+                            let winref = win.get_window_ref();
                             if win.get_window_ref().get_fullscreen().is_some() {
-                                win.get_window_ref().set_decorations(true);
-                                win.get_window_ref().set_fullscreen(None);
+                                winref.hide();
+                                winref.set_decorations(true);
+                                winref.set_fullscreen(None);
+                                winref.show();
                             } else {
-                                win.get_window_ref().set_decorations(false);
-                                win.get_window_ref().set_fullscreen(Some(
-                                    win.get_window_ref().get_current_monitor(),
-                                ));
+                                winref.hide();
+                                winref.set_decorations(false);
+                                winref.set_fullscreen(Some(winref.get_current_monitor()));
+                                winref.show();
                             }
                         }
                     }
