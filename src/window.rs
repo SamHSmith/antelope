@@ -263,7 +263,6 @@ where
                     } else {
                         return;
                     };
-
                     let (new_swapchain, new_images) =
                         match swapchain.recreate_with_dimension(dimensions) {
                             Ok(r) => r,
@@ -397,7 +396,13 @@ where
                 win.push_event(event);
                 winit::ControlFlow::Continue
             }
-            _ => winit::ControlFlow::Continue,
+            _ => {
+                if win.should_stop() {
+                    winit::ControlFlow::Break
+                } else {
+                    winit::ControlFlow::Continue
+                }
+            }
         });
         thread.join().unwrap();
     });
@@ -631,6 +636,7 @@ void main() {
     fn stop(&self) {
         let mut data = self.should_stop.lock().unwrap();
         *data = true;
+        self.get_window_ref().hide();
     }
 
     fn should_stop(&self) -> bool {

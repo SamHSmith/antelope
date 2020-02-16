@@ -178,7 +178,6 @@ mod tests {
 
         while !win.should_stop() {
             for e in win.get_events() {
-                println!("yea {:?}", e);
                 match e {
                     KeyboardInput { input, .. } => {
                         if input.scancode == 57 && input.state == ElementState::Pressed {
