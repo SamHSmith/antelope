@@ -8,406 +8,393 @@ use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 use vulkano::swapchain;
 use vulkano::swapchain::{
-    AcquireError, PresentMode, Surface, SurfaceTransform, Swapchain, SwapchainCreationError,
+    AcquireError, ColorSpace, FullscreenExclusive, PresentMode, Surface, SurfaceTransform,
+    Swapchain, SwapchainCreationError,
 };
 use vulkano::sync;
 use vulkano::sync::{FlushError, GpuFuture};
 
 use vulkano_win::VkSurfaceBuild;
 
-use winit::{Event, EventsLoop, WindowBuilder, WindowEvent};
-
 use std::borrow::Borrow;
 use std::clone::Clone;
 
+use std::ops::Deref;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
+use winit::event::{Event, WindowEvent};
+use winit::event_loop::{ControlFlow, EventLoop};
+use winit::window::{Fullscreen, WindowBuilder};
+
+#[cfg(unix)]
+use winit::platform::unix::EventLoopExtUnix;
+
+#[cfg(windows)]
+use winit::platform::windows::EventLoopExtWindows;
 
 #[derive(Default, Debug, Clone)]
 struct TestVertex {
     pub position: [f32; 2],
 }
 
+lazy_static! {
+    static ref INSTANCE: Arc<Instance> =
+        Instance::new(None, &vulkano_win::required_extensions(), None).unwrap();
+}
+
 pub fn main_loop<Window: 'static>() -> (JoinHandle<()>, Arc<Window>)
 where
     Window: crate::window::Window,
 {
-    let (tx2, rx2) = mpsc::channel::<Arc<Window>>();
+    let (tx, rx) = mpsc::channel::<Arc<Window>>();
 
     let thread = std::thread::spawn(move || {
-        let (tx, rx) = mpsc::channel::<Arc<Window>>();
-        let mut events_loop = EventsLoop::new();
-
-        // The first step of any Vulkan program is to create an instance.
-        let instance0 = {
-            // When we create an instance, we have to pass a list of extensions that we want to enable.
-            //
-            // All the window-drawing functionalities are part of non-core extensions that we need
-            // to enable manually. To do so, we ask the `vulkano_win` crate for the list of extensions
-            // required to draw to a window.
-            let extensions = vulkano_win::required_extensions();
-
-            // Now creating the instance.
-            Instance::new(None, &extensions, None).unwrap()
-        };
+        let events_loop = EventLoop::new_any_thread();
 
         let surface = WindowBuilder::new()
-            .build_vk_surface(&events_loop, instance0.clone())
+            .build_vk_surface(&events_loop, INSTANCE.clone())
             .unwrap();
-        let thread = std::thread::spawn(move || {
-            let instance = instance0;
-            let window = surface.window();
 
-            // We then choose which physical device to use.
-            //
-            // In a real application, there are three things to take into consideration:
-            //
-            // - Some devices may not support some of the optional features that may be required by your
-            //   application. You should filter out the devices that don't support your app.
-            //
-            // - Not all devices can draw to a certain surface. Once you create your window, you have to
-            //   choose a device that is capable of drawing to it.
-            //
-            // - You probably want to leave the choice between the remaining devices to the user.
-            //
-            // For the sake of the example we are just going to use the first device, which should work
-            // most of the time.
-            //TODO Add proper device selection
-            let physical = PhysicalDevice::enumerate(&instance).next().unwrap();
-            // Some little debug infos.
-            println!(
-                "Using device: {} (type: {:?})",
-                physical.name(),
-                physical.ty()
-            );
+        // We then choose which physical device to use.
+        //
+        // In a real application, there are three things to take into consideration:
+        //
+        // - Some devices may not support some of the optional features that may be required by your
+        //   application. You should filter out the devices that don't support your app.
+        //
+        // - Not all devices can draw to a certain surface. Once you create your window, you have to
+        //   choose a device that is capable of drawing to it.
+        //
+        // - You probably want to leave the choice between the remaining devices to the user.
+        //
+        // For the sake of the example we are just going to use the first device, which should work
+        // most of the time.
+        //TODO Add proper device selection
+        let physical = PhysicalDevice::enumerate(&INSTANCE).next().unwrap();
+        // Some little debug infos.
+        println!(
+            "Using device: {} (type: {:?})",
+            physical.name(),
+            physical.ty()
+        );
 
-            // The objective of this example is to draw a triangle on a window. To do so, we first need to
-            // create the window.
-            //
-            // This is done by creating a `WindowBuilder` from the `winit` crate, then calling the
-            // `build_vk_surface` method provided by the `VkSurfaceBuild` trait from `vulkano_win`. If you
-            // ever get an error about `build_vk_surface` being undefined in one of your projects, this
-            // probably means that you forgot to import this trait.
-            //
-            // This returns a `vulkano::swapchain::Surface` object that contains both a cross-platform winit
-            // window and a cross-platform Vulkan surface that represents the surface of the window.
+        // The objective of this example is to draw a triangle on a window. To do so, we first need to
+        // create the window.
+        //
+        // This is done by creating a `WindowBuilder` from the `winit` crate, then calling the
+        // `build_vk_surface` method provided by the `VkSurfaceBuild` trait from `vulkano_win`. If you
+        // ever get an error about `build_vk_surface` being undefined in one of your projects, this
+        // probably means that you forgot to import this trait.
+        //
+        // This returns a `vulkano::swapchain::Surface` object that contains both a cross-platform winit
+        // window and a cross-platform Vulkan surface that represents the surface of the window.
 
-            // The next step is to choose which GPU queue will execute our draw commands.
-            //
-            // Devices can provide multiple queues to run commands in parallel (for example a draw queue
-            // and a compute queue), similar to CPU threads. This is something you have to have to manage
-            // manually in Vulkan.
-            //
-            // In a real-life application, we would probably use at least a graphics queue and a transfers
-            // queue to handle data transfers in parallel. In this example we only use one queue.
-            //
-            // We have to choose which queues to use early on, because we will need this info very soon.
-            let queue_family = physical
-                .queue_families()
-                .find(|&q| {
-                    // We take the first queue that supports drawing to our window.
-                    q.supports_graphics() && surface.is_supported(q).unwrap_or(false)
-                })
-                .unwrap();
+        // The next step is to choose which GPU queue will execute our draw commands.
+        //
+        // Devices can provide multiple queues to run commands in parallel (for example a draw queue
+        // and a compute queue), similar to CPU threads. This is something you have to have to manage
+        // manually in Vulkan.
+        //
+        // In a real-life application, we would probably use at least a graphics queue and a transfers
+        // queue to handle data transfers in parallel. In this example we only use one queue.
+        //
+        // We have to choose which queues to use early on, because we will need this info very soon.
+        let queue_family = physical
+            .queue_families()
+            .find(|&q| {
+                // We take the first queue that supports drawing to our window.
+                q.supports_graphics() && surface.is_supported(q).unwrap_or(false)
+            })
+            .unwrap();
 
-            // Now initializing the device. This is probably the most important object of Vulkan.
-            //
-            // We have to pass five parameters when creating a device:
-            //
-            // - Which physical device to connect to.
-            //
-            // - A list of optional features and extensions that our program needs to work correctly.
-            //   Some parts of the Vulkan specs are optional and must be enabled manually at device
-            //   creation. In this example the only thing we are going to need is the `khr_swapchain`
-            //   extension that allows us to draw to a window.
-            //
-            // - A list of layers to enable. This is very niche, and you will usually pass `None`.
-            //
-            // - The list of queues that we are going to use. The exact parameter is an iterator whose
-            //   items are `(Queue, f32)` where the floating-point represents the priority of the queue
-            //   between 0.0 and 1.0. The priority of the queue is a hint to the implementation about how
-            //   much it should prioritize queues between one another.
-            //
-            // The list of created queues is returned by the function alongside with the device.
-            let mut device_ext = DeviceExtensions {
-                khr_swapchain: true,
-                ..DeviceExtensions::none()
-            };
+        // Now initializing the device. This is probably the most important object of Vulkan.
+        //
+        // We have to pass five parameters when creating a device:
+        //
+        // - Which physical device to connect to.
+        //
+        // - A list of optional features and extensions that our program needs to work correctly.
+        //   Some parts of the Vulkan specs are optional and must be enabled manually at device
+        //   creation. In this example the only thing we are going to need is the `khr_swapchain`
+        //   extension that allows us to draw to a window.
+        //
+        // - A list of layers to enable. This is very niche, and you will usually pass `None`.
+        //
+        // - The list of queues that we are going to use. The exact parameter is an iterator whose
+        //   items are `(Queue, f32)` where the floating-point represents the priority of the queue
+        //   between 0.0 and 1.0. The priority of the queue is a hint to the implementation about how
+        //   much it should prioritize queues between one another.
+        //
+        // The list of created queues is returned by the function alongside with the device.
+        let mut device_ext = DeviceExtensions {
+            khr_swapchain: true,
+            ..DeviceExtensions::none()
+        };
 
-            Window::get_device_extensions(&mut device_ext);
+        Window::get_device_extensions(&mut device_ext);
 
-            let (device, mut queues) = Device::new(
-                physical,
-                physical.supported_features(),
-                &device_ext,
-                [(queue_family, 0.5)].iter().cloned(), //TODO add support for user selected queue families
+        let (device, mut queues) = Device::new(
+            physical,
+            physical.supported_features(),
+            &device_ext,
+            [(queue_family, 0.5)].iter().cloned(), //TODO add support for user selected queue families
+        )
+        .unwrap();
+
+        // Since we can request multiple queues, the `queues` variable is in fact an iterator. In this
+        // example we use only one queue, so we just retrieve the first and only element of the
+        // iterator and throw it away.
+        let queue = queues.next().unwrap(); //TODO add support for multiple queues
+
+        // Before we can draw on the surface, we have to create what is called a swapchain. Creating
+        // a swapchain allocates the color buffers that will contain the image that will ultimately
+        // be visible on the screen. These images are returned alongside with the swapchain.
+        let (mut swapchain, images) = {
+            // Querying the capabilities of the surface. When we create the swapchain we can only
+            // pass values that are allowed by the capabilities.
+            let caps = surface.capabilities(physical).unwrap();
+
+            let usage = caps.supported_usage_flags;
+
+            // The alpha mode indicates how the alpha value of the final image will behave. For example
+            // you can choose whether the window will be opaque or transparent.
+            let alpha = caps.supported_composite_alpha.iter().next().unwrap();
+
+            // Choosing the internal format that the images will have.
+            let format = caps.supported_formats[0].0;
+
+            // The dimensions of the window, only used to initially setup the swapchain.
+            // NOTE:
+            // On some drivers the swapchain dimensions are specified by `caps.current_extent` and the
+            // swapchain size must use these dimensions.
+            // These dimensions are always the same as the window dimensions
+            //
+            // However other drivers dont specify a value i.e. `caps.current_extent` is `None`
+            // These drivers will allow anything but the only sensible value is the window dimensions.
+            //
+            // Because for both of these cases, the swapchain needs to be the window dimensions, we just use that.
+            let size = surface.window().inner_size();
+            let initial_dimensions = [size.width, size.height];
+
+            // Please take a look at the docs for the meaning of the parameters we didn't mention.
+            Swapchain::new(
+                device.clone(),
+                surface.clone(),
+                caps.min_image_count,
+                format,
+                initial_dimensions,
+                1,
+                usage,
+                &queue,
+                SurfaceTransform::Identity,
+                alpha,
+                PresentMode::Immediate, //TODO add custom present modes
+                FullscreenExclusive::Allowed,
+                false,
+                ColorSpace::SrgbNonLinear,
             )
-            .unwrap();
+            .unwrap()
+        };
 
-            // Since we can request multiple queues, the `queues` variable is in fact an iterator. In this
-            // example we use only one queue, so we just retrieve the first and only element of the
-            // iterator and throw it away.
-            let queue = queues.next().unwrap(); //TODO add support for multiple queues
+        // The render pass we created above only describes the layout of our framebuffers. Before we
+        // can draw we also need to create the actual framebuffers.
+        //
+        // Since we need to draw to multiple images, we are going to create a different framebuffer for
+        // each image.
 
-            // Before we can draw on the surface, we have to create what is called a swapchain. Creating
-            // a swapchain allocates the color buffers that will contain the image that will ultimately
-            // be visible on the screen. These images are returned alongside with the swapchain.
-            let (mut swapchain, images) = {
-                // Querying the capabilities of the surface. When we create the swapchain we can only
-                // pass values that are allowed by the capabilities.
-                let caps = surface.capabilities(physical).unwrap();
+        // Initialization is finally finished!
 
-                let usage = caps.supported_usage_flags;
+        // In some situations, the swapchain will become invalid by itself. This includes for example
+        // when the window is resized (as the images of the] swapchain will no longer match the
+        // window's) or, on Android, when the application went to the background and goes back to the
+        // foreground.
+        //
+        // In this situation, acquiring a swapchain image or presenting it will return an error.
+        // Rendering to an image of that swapchain will not produce any error, but may or may not work.
+        // To continue rendering, we need to recreate the swapchain by creating a new swapchain.
+        // Here, we remember that we need to do this for the next loop iteration.
+        let mut recreate_swapchain = false;
 
-                // The alpha mode indicates how the alpha value of the final image will behave. For example
-                // you can choose whether the window will be opaque or transparent.
-                let alpha = caps.supported_composite_alpha.iter().next().unwrap();
+        // In the loop below we are going to submit commands to the GPU. Submitting a command produces
+        // an object that implements the `GpuFuture` trait, which holds the resources for as long as
+        // they are in use by the GPU.
+        //
+        // Destroying the `GpuFuture` blocks until the GPU is finished executing it. In order to avoid
+        // that, we store the submission of the previous frame here.
+        let mut previous_frame_end =
+            Some(Box::new(sync::now(device.clone())) as Box<dyn GpuFuture>);
 
-                // Choosing the internal format that the images will have.
-                let format = caps.supported_formats[0].0;
+        let win = Arc::new(Window::setup(&device, swapchain.format(), surface.clone()));
 
-                // The dimensions of the window, only used to initially setup the swapchain.
-                // NOTE:
-                // On some drivers the swapchain dimensions are specified by `caps.current_extent` and the
-                // swapchain size must use these dimensions.
-                // These dimensions are always the same as the window dimensions
-                //
-                // However other drivers dont specify a value i.e. `caps.current_extent` is `None`
-                // These drivers will allow anything but the only sensible value is the window dimensions.
-                //
-                // Because for both of these cases, the swapchain needs to be the window dimensions, we just use that.
-                let initial_dimensions = if let Some(dimensions) = window.get_inner_size() {
-                    // convert to physical pixels
-                    let dimensions: (u32, u32) =
-                        dimensions.to_physical(window.get_hidpi_factor()).into();
-                    [dimensions.0, dimensions.1]
-                } else {
-                    // The window no longer exists so exit the application.
-                    return;
-                };
+        tx.send(win.clone()).unwrap();
 
-                // Please take a look at the docs for the meaning of the parameters we didn't mention.
-                Swapchain::new(
-                    device.clone(),
-                    surface.clone(),
-                    caps.min_image_count,
-                    format,
-                    initial_dimensions,
-                    1,
-                    usage,
-                    &queue,
-                    SurfaceTransform::Identity,
-                    alpha,
-                    PresentMode::Immediate, //TODO add custom present modes
-                    true,
-                    None,
-                )
-                .unwrap()
-            };
+        let mut framebuffers = win.create_framebuffers(&device, &images);
 
-            // The render pass we created above only describes the layout of our framebuffers. Before we
-            // can draw we also need to create the actual framebuffers.
-            //
-            // Since we need to draw to multiple images, we are going to create a different framebuffer for
-            // each image.
+        let mut totalmillies = 0.0;
+        let mut totalcounts = 0;
+        let mut last_printout = Instant::now();
 
-            // Initialization is finally finished!
+        events_loop.run(move |event: winit::event::Event<'_, ()>, _, control_flow| {
+            // ControlFlow::Poll continuously runs the event loop, even if the OS hasn't
+            // dispatched any events. This is ideal for games and similar applications.
+            *control_flow = ControlFlow::Poll;
 
-            // In some situations, the swapchain will become invalid by itself. This includes for example
-            // when the window is resized (as the images of the] swapchain will no longer match the
-            // window's) or, on Android, when the application went to the background and goes back to the
-            // foreground.
-            //
-            // In this situation, acquiring a swapchain image or presenting it will return an error.
-            // Rendering to an image of that swapchain will not produce any error, but may or may not work.
-            // To continue rendering, we need to recreate the swapchain by creating a new swapchain.
-            // Here, we remember that we need to do this for the next loop iteration.
-            let mut recreate_swapchain = false;
+            match event {
+                Event::WindowEvent {
+                    event: WindowEvent::CloseRequested,
+                    ..
+                } => {
+                    println!("The close button was pressed; stopping");
 
-            // In the loop below we are going to submit commands to the GPU. Submitting a command produces
-            // an object that implements the `GpuFuture` trait, which holds the resources for as long as
-            // they are in use by the GPU.
-            //
-            // Destroying the `GpuFuture` blocks until the GPU is finished executing it. In order to avoid
-            // that, we store the submission of the previous frame here.
-            let mut previous_frame_end = Box::new(sync::now(device.clone())) as Box<dyn GpuFuture>;
+                    *control_flow = ControlFlow::Exit
+                }
+                Event::WindowEvent { event, .. } => {
+                    win.push_event(event.to_static().unwrap());
+                }
+                Event::MainEventsCleared => {
+                    // Application update code.
+                    //perf
+                    let framestart = Instant::now();
 
-            let win = Arc::new(Window::setup(&device, swapchain.format(), surface.clone()));
+                    // It is important to call this function from time to time, otherwise resources will keep
+                    // accumulating and you will eventually reach an out of memory error.
+                    // Calling this function polls various fences in order to determine what the GPU has
+                    // already processed, and frees the resources that are no longer needed.
 
-            tx.send(win.clone()).unwrap();
+                    previous_frame_end.as_mut().unwrap().cleanup_finished();
 
-            let mut framebuffers = win.create_framebuffers(&device, &images);
+                    // Whenever the window resizes we need to recreate everything dependent on the window size.
+                    // In this example that includes the swapchain, the framebuffers and the dynamic state viewport.
+                    if recreate_swapchain {
+                        // Get the new dimensions of the window.
+                        let size = surface.window().inner_size();
+                        let dimensions = [size.width, size.height];
+                        let (new_swapchain, new_images) =
+                            match swapchain.recreate_with_dimensions(dimensions) {
+                                Ok(r) => r,
+                                // This error tends to happen when the user is manually resizing the window.
+                                // Simply restarting the loop is the easiest way to fix this issue.
+                                Err(SwapchainCreationError::UnsupportedDimensions) => return,
+                                Err(err) => panic!("{:?}", err),
+                            };
 
-            let mut totalmillies = 0.0;
-            let mut totalcounts = 0;
-            let mut last_printout = Instant::now();
-            loop {
-                //perf
-                let framestart = Instant::now();
+                        swapchain = new_swapchain;
+                        // Because framebuffers contains an Arc on the old swapchain, we need to
+                        // recreate framebuffers as well.
+                        framebuffers = win.create_framebuffers(&device, &new_images);
 
-                // It is important to call this function from time to time, otherwise resources will keep
-                // accumulating and you will eventually reach an out of memory error.
-                // Calling this function polls various fences in order to determine what the GPU has
-                // already processed, and frees the resources that are no longer needed.
-                previous_frame_end.cleanup_finished();
+                        recreate_swapchain = false;
+                    }
 
-                // Whenever the window resizes we need to recreate everything dependent on the window size.
-                // In this example that includes the swapchain, the framebuffers and the dynamic state viewport.
-                if recreate_swapchain {
-                    // Get the new dimensions of the window.
-                    let dimensions = if let Some(dimensions) = window.get_inner_size() {
-                        let dimensions: (u32, u32) =
-                            dimensions.to_physical(window.get_hidpi_factor()).into();
-                        [dimensions.0, dimensions.1]
-                    } else {
-                        return;
-                    };
-                    let (new_swapchain, new_images) =
-                        match swapchain.recreate_with_dimension(dimensions) {
+                    // Before we can draw on the output, we have to *acquire* an image from the swapchain. If
+                    // no image is available (which happens if you submit draw commands too quickly), then the
+                    // function will block.
+                    // This operation returns the index of the image that we are allowed to draw upon.
+                    //
+                    // This function can block if no image is available. The parameter is an optional timeout
+                    // after which the function call will return an error.
+                    let (image_num, sub_optimal, acquire_future) =
+                        match swapchain::acquire_next_image(swapchain.clone(), None) {
                             Ok(r) => r,
-                            // This error tends to happen when the user is manually resizing the window.
-                            // Simply restarting the loop is the easiest way to fix this issue.
-                            Err(SwapchainCreationError::UnsupportedDimensions) => continue,
+                            Err(AcquireError::OutOfDate) => {
+                                recreate_swapchain = true;
+                                return;
+                            }
                             Err(err) => panic!("{:?}", err),
                         };
 
-                    swapchain = new_swapchain;
-                    // Because framebuffers contains an Arc on the old swapchain, we need to
-                    // recreate framebuffers as well.
-                    framebuffers = win.create_framebuffers(&device, &new_images);
+                    let pre_cmd = win.pre_render_commands(&device, queue_family);
 
-                    recreate_swapchain = false;
-                }
+                    let f1 = previous_frame_end.take().unwrap().join(acquire_future);
 
-                // Before we can draw on the output, we have to *acquire* an image from the swapchain. If
-                // no image is available (which happens if you submit draw commands too quickly), then the
-                // function will block.
-                // This operation returns the index of the image that we are allowed to draw upon.
-                //
-                // This function can block if no image is available. The parameter is an optional timeout
-                // after which the function call will return an error.
-                let (image_num, acquire_future) =
-                    match swapchain::acquire_next_image(swapchain.clone(), None) {
-                        Ok(r) => r,
-                        Err(AcquireError::OutOfDate) => {
-                            recreate_swapchain = true;
-                            continue;
+                    if pre_cmd.is_some() {
+                        let future = f1
+                            .then_execute(queue.clone(), pre_cmd.unwrap())
+                            .unwrap()
+                            .then_execute(
+                                queue.clone(),
+                                win.render(&device, queue_family, &framebuffers[image_num]),
+                            )
+                            .unwrap()
+                            .then_swapchain_present(queue.clone(), swapchain.clone(), image_num)
+                            .then_signal_fence_and_flush();
+
+                        match future {
+                            Ok(future) => {
+                                // This wait is required when using NVIDIA or running on macOS. See https://github.com/vulkano-rs/vulkano/issues/1247
+                                future.wait(None).unwrap();
+                                previous_frame_end = Some(Box::new(future) as Box<_>);
+                            }
+                            Err(FlushError::OutOfDate) => {
+                                recreate_swapchain = true;
+                                previous_frame_end =
+                                    Some(Box::new(sync::now(device.clone())) as Box<_>);
+                            }
+                            Err(e) => {
+                                println!("{:?}", e);
+                                previous_frame_end =
+                                    Some(Box::new(sync::now(device.clone())) as Box<_>);
+                            }
                         }
-                        Err(err) => panic!("{:?}", err),
-                    };
+                    } else {
+                        let future = f1
+                            .then_execute(
+                                queue.clone(),
+                                win.render(&device, queue_family, &framebuffers[image_num]),
+                            )
+                            .unwrap()
+                            .then_swapchain_present(queue.clone(), swapchain.clone(), image_num)
+                            .then_signal_fence_and_flush();
 
-                let pre_cmd = win.pre_render_commands(&device, queue_family);
-
-                let f1 = previous_frame_end.join(acquire_future);
-
-                if pre_cmd.is_some() {
-                    let future = f1
-                        .then_execute(queue.clone(), pre_cmd.unwrap())
-                        .unwrap()
-                        .then_execute(
-                            queue.clone(),
-                            win.render(&device, queue_family, &framebuffers[image_num]),
-                        )
-                        .unwrap()
-                        .then_swapchain_present(queue.clone(), swapchain.clone(), image_num)
-                        .then_signal_fence_and_flush();
-
-                    match future {
-                        Ok(future) => {
-                            // This wait is required when using NVIDIA or running on macOS. See https://github.com/vulkano-rs/vulkano/issues/1247
-                            future.wait(None).unwrap();
-                            previous_frame_end = Box::new(future) as Box<_>;
-                        }
-                        Err(FlushError::OutOfDate) => {
-                            recreate_swapchain = true;
-                            previous_frame_end = Box::new(sync::now(device.clone())) as Box<_>;
-                        }
-                        Err(e) => {
-                            println!("{:?}", e);
-                            previous_frame_end = Box::new(sync::now(device.clone())) as Box<_>;
-                        }
-                    }
-                } else {
-                    let future = f1
-                        .then_execute(
-                            queue.clone(),
-                            win.render(&device, queue_family, &framebuffers[image_num]),
-                        )
-                        .unwrap()
-                        .then_swapchain_present(queue.clone(), swapchain.clone(), image_num)
-                        .then_signal_fence_and_flush();
-
-                    match future {
-                        Ok(future) => {
-                            // This wait is required when using NVIDIA or running on macOS. See https://github.com/vulkano-rs/vulkano/issues/1247
-                            future.wait(None).unwrap();
-                            previous_frame_end = Box::new(future) as Box<_>;
-                        }
-                        Err(FlushError::OutOfDate) => {
-                            recreate_swapchain = true;
-                            previous_frame_end = Box::new(sync::now(device.clone())) as Box<_>;
-                        }
-                        Err(e) => {
-                            println!("{:?}", e);
-                            previous_frame_end = Box::new(sync::now(device.clone())) as Box<_>;
+                        match future {
+                            Ok(future) => {
+                                // This wait is required when using NVIDIA or running on macOS. See https://github.com/vulkano-rs/vulkano/issues/1247
+                                future.wait(None).unwrap();
+                                previous_frame_end = Some(Box::new(future) as Box<_>);
+                            }
+                            Err(FlushError::OutOfDate) => {
+                                recreate_swapchain = true;
+                                previous_frame_end =
+                                    Some(Box::new(sync::now(device.clone())) as Box<_>);
+                            }
+                            Err(e) => {
+                                println!("{:?}", e);
+                                previous_frame_end =
+                                    Some(Box::new(sync::now(device.clone())) as Box<_>);
+                            }
                         }
                     }
+
+                    // Note that in more complex programs it is likely that one of `acquire_next_image`,
+                    // `command_buffer::submit`, or `present` will block for some time. This happens when the
+                    // GPU's queue is full and the driver has to wait until the GPU finished some work.
+                    //
+                    // Unfortunately the Vulkan API doesn't provide any way to not wait or to detect when a
+                    // wait would happen. Blocking may be the desired behavior, but if you don't want to
+                    // block you should spawn a separate thread dedicated to submissions.
+
+                    if win.should_stop() {
+                        *control_flow = ControlFlow::Exit;
+                        return;
+                    }
+
+                    totalcounts += 1;
+                    totalmillies += framestart.elapsed().as_secs_f64() * 1000.0;
+
+                    if last_printout.elapsed().as_secs() >= 8 {
+                        println!("Avg Frametime: {}", totalmillies / f64::from(totalcounts));
+                        totalcounts = 0;
+                        totalmillies = 0.0;
+                        last_printout = Instant::now();
+                    }
                 }
-
-                // Note that in more complex programs it is likely that one of `acquire_next_image`,
-                // `command_buffer::submit`, or `present` will block for some time. This happens when the
-                // GPU's queue is full and the driver has to wait until the GPU finished some work.
-                //
-                // Unfortunately the Vulkan API doesn't provide any way to not wait or to detect when a
-                // wait would happen. Blocking may be the desired behavior, but if you don't want to
-                // block you should spawn a separate thread dedicated to submissions.
-
-                if win.should_stop() {
-                    return;
-                }
-
-                totalcounts += 1;
-                totalmillies += framestart.elapsed().as_secs_f64() * 1000.0;
-
-                if last_printout.elapsed().as_secs() >= 8 {
-                    println!("Avg Frametime: {}", totalmillies / f64::from(totalcounts));
-                    totalcounts = 0;
-                    totalmillies = 0.0;
-                    last_printout = Instant::now();
-                }
+                _ => (),
             }
         });
-        let win = rx.recv().unwrap();
-        tx2.send(win.clone());
-
-        events_loop.run_forever(|event| match event {
-            winit::Event::WindowEvent {
-                event: winit::WindowEvent::CloseRequested,
-                ..
-            } => {
-                win.stop();
-                winit::ControlFlow::Break
-            }
-            Event::WindowEvent {
-                event,
-                window_id: _window_id,
-            } => {
-                win.push_event(event);
-                winit::ControlFlow::Continue
-            }
-            _ => {
-                if win.should_stop() {
-                    winit::ControlFlow::Break
-                } else {
-                    winit::ControlFlow::Continue
-                }
-            }
-        });
-        thread.join().unwrap();
     });
 
-    let windowref = rx2.recv().unwrap();
+    let windowref = rx.recv().unwrap();
     (thread, windowref)
 }
 
@@ -426,18 +413,18 @@ pub trait Window: Send + Sync {
     fn setup(
         device: &Arc<Device>,
         swapchain_format: vulkano::format::Format,
-        surface: Arc<Surface<winit::Window>>,
+        surface: Arc<Surface<winit::window::Window>>,
     ) -> Self;
 
     fn get_dynamic_state_ref(&self) -> &Mutex<DynamicState>;
     fn get_render_pass(&self) -> &Mutex<Arc<dyn RenderPassAbstract + Sync + Send>>;
-    fn get_surface_ref(&self) -> &Arc<Surface<winit::Window>>;
+    fn get_surface_ref(&self) -> &Arc<Surface<winit::window::Window>>;
 
-    fn get_window_ref(&self) -> &winit::Window {
+    fn get_window_ref(&self) -> &winit::window::Window {
         self.get_surface_ref().window()
     }
 
-    fn push_event(&self, _event: WindowEvent) {
+    fn push_event(&self, _event: WindowEvent<'static>) {
         println!("events have not been implemented on this Window yet. If you want this functionality implement antelope::window::Window::push_event")
     }
 
@@ -447,7 +434,7 @@ pub trait Window: Send + Sync {
     fn create_framebuffers(
         &self,
         device: &Arc<Device>,
-        images: &[Arc<SwapchainImage<winit::Window>>],
+        images: &[Arc<SwapchainImage<winit::window::Window>>],
     ) -> Vec<Self::Frametype>;
 
     fn pre_render_commands(
@@ -472,7 +459,7 @@ pub struct DemoTriangleRenderer {
     pipeline: Mutex<Arc<dyn GraphicsPipelineAbstract + Sync + Send>>,
     dynamic_state: Mutex<DynamicState>,
     should_stop: Mutex<bool>,
-    surface: Arc<Surface<winit::Window>>,
+    surface: Arc<Surface<winit::window::Window>>,
 }
 
 pub struct TriangleFrame {
@@ -491,12 +478,13 @@ impl Window for DemoTriangleRenderer {
     fn setup(
         device: &Arc<Device>,
         swapchain_format: vulkano::format::Format,
-        surface: Arc<Surface<winit::Window>>,
+        surface: Arc<Surface<winit::window::Window>>,
     ) -> Self {
         let vertex_buffer = {
             CpuAccessibleBuffer::<[TestVertex]>::from_iter(
                 device.clone(),
                 BufferUsage::all(),
+                true,
                 [
                     TestVertex {
                         position: [-0.5, -0.25],
@@ -629,14 +617,14 @@ void main() {
         self.render_pass.borrow()
     }
 
-    fn get_surface_ref(&self) -> &Arc<Surface<winit::Window>> {
+    fn get_surface_ref(&self) -> &Arc<Surface<winit::window::Window>> {
         &self.surface
     }
 
     fn stop(&self) {
         let mut data = self.should_stop.lock().unwrap();
         *data = true;
-        self.get_window_ref().hide();
+        self.get_window_ref().set_visible(false);
     }
 
     fn should_stop(&self) -> bool {
@@ -646,7 +634,7 @@ void main() {
     fn create_framebuffers(
         &self,
         device: &Arc<Device>,
-        images: &[Arc<SwapchainImage<winit::Window>>],
+        images: &[Arc<SwapchainImage<winit::window::Window>>],
     ) -> Vec<TriangleFrame> {
         let dimensions = images[0].dimensions();
 

@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate lazy_static;
+
 #[cfg(test)]
 mod tests {
     use vulkano::command_buffer::CommandBuffer;
@@ -45,6 +48,7 @@ mod tests {
         let buf = CpuAccessibleBuffer::from_iter(
             device.clone(),
             BufferUsage::all(),
+            true,
             (0..1024 * 1024 * 4).map(|_| 0u8),
         )
         .expect("failed to create buffer");
@@ -91,9 +95,11 @@ mod tests {
 
     use crate::MeshRenderer;
 
+    use std::ops::Deref;
     use vulkano::sync::GpuFuture;
-    use winit::ElementState;
-    use winit::WindowEvent::KeyboardInput;
+    use winit::event::ElementState;
+    use winit::event::WindowEvent::KeyboardInput;
+    use winit::window::Fullscreen;
 
     #[test]
     fn triangle() {
@@ -178,14 +184,16 @@ mod tests {
 
         while !win.should_stop() {
             for e in win.get_events() {
-                match e {
+                match e.deref() {
                     KeyboardInput { input, .. } => {
                         if input.scancode == 57 && input.state == ElementState::Pressed {
                             let winref = win.get_window_ref();
-                            if win.get_window_ref().get_fullscreen().is_some() {
+                            if win.get_window_ref().fullscreen().is_some() {
                                 winref.set_fullscreen(None);
                             } else {
-                                winref.set_fullscreen(Some(winref.get_current_monitor()));
+                                winref.set_fullscreen(Some(Fullscreen::Borderless(
+                                    winref.current_monitor(),
+                                )));
                             }
                         }
                     }
@@ -222,7 +230,7 @@ use vulkano::swapchain::Surface;
 
 use vulkano::image::{AttachmentImage, ImageUsage, SwapchainImage};
 use vulkano::instance::QueueFamily;
-use winit::WindowEvent;
+use winit::event::WindowEvent;
 
 pub struct MeshRenderer {
     pub render_info: PushData<RenderInfo>,
@@ -232,12 +240,12 @@ pub struct MeshRenderer {
     pipeline_layout: [Arc<dyn PipelineLayoutAbstract + Send + Sync>; 2],
     dynamic_state: Mutex<DynamicState>,
     should_stop: Mutex<bool>,
-    surface: Arc<Surface<winit::Window>>,
-    events: Mutex<Queue<WindowEvent>>,
+    surface: Arc<Surface<winit::window::Window>>,
+    events: Mutex<Queue<Arc<WindowEvent<'static>>>>,
 }
 
 impl MeshRenderer {
-    pub fn get_events(&self) -> Vec<WindowEvent> {
+    pub fn get_events(&self) -> Vec<Arc<WindowEvent>> {
         let mut vec = Vec::new();
         let mut lock = self.events.lock().unwrap();
         loop {
@@ -273,7 +281,7 @@ impl Window for MeshRenderer {
     fn setup(
         device: &Arc<Device>,
         swapchain_format: vulkano::format::Format,
-        surface: Arc<Surface<winit::Window>>,
+        surface: Arc<Surface<winit::window::Window>>,
     ) -> Self {
         let render_pass = Arc::new(
             vulkano::ordered_passes_renderpass!(
@@ -529,13 +537,13 @@ void main() {
         self.render_pass.borrow()
     }
 
-    fn get_surface_ref(&self) -> &Arc<Surface<winit::Window>> {
+    fn get_surface_ref(&self) -> &Arc<Surface<winit::window::Window>> {
         &self.surface
     }
 
-    fn push_event(&self, event: WindowEvent) {
+    fn push_event(&self, event: WindowEvent<'static>) {
         let mut lock = self.events.lock().unwrap();
-        let err = lock.add(event);
+        let err = lock.add(Arc::from(event));
         debug_assert!(!err.is_err());
     }
 
@@ -551,7 +559,7 @@ void main() {
     fn create_framebuffers(
         &self,
         device: &Arc<Device>,
-        images: &[Arc<SwapchainImage<winit::Window>>],
+        images: &[Arc<SwapchainImage<winit::window::Window>>],
     ) -> Vec<MeshFrame> {
         let dimensions = images[0].dimensions();
 
@@ -649,6 +657,7 @@ void main() {
         let post_area = CpuAccessibleBuffer::from_iter(
             device.clone(),
             BufferUsage::all(),
+            true,
             [
                 PostVertex { pos: [-1.0, -1.0] },
                 PostVertex { pos: [1.0, -1.0] },
@@ -662,19 +671,25 @@ void main() {
         )
         .unwrap();
 
-        let descriptor_set2 = PersistentDescriptorSet::start(self.pipeline_layout[1].clone(), 0)
-            .add_image(framebuffer.albedobuffer.clone())
-            .unwrap()
-            .add_image(framebuffer.normalbuffer.clone())
-            .unwrap()
-            .add_image(framebuffer.depthbuffer.clone())
-            .unwrap()
-            .build()
-            .unwrap();
+        let descriptor_set2 = PersistentDescriptorSet::start(
+            self.pipeline_layout[1]
+                .descriptor_set_layout(0)
+                .unwrap()
+                .clone(),
+        )
+        .add_image(framebuffer.albedobuffer.clone())
+        .unwrap()
+        .add_image(framebuffer.normalbuffer.clone())
+        .unwrap()
+        .add_image(framebuffer.depthbuffer.clone())
+        .unwrap()
+        .build()
+        .unwrap();
 
         let camera_uniform = CpuAccessibleBuffer::from_iter(
             device.clone(),
             BufferUsage::all(),
+            true,
             [cam.to_matrix()].iter().cloned(),
         )
         .unwrap();
@@ -684,18 +699,24 @@ void main() {
             //a good indication of a bug somewhere else in the code.
             device.clone(),
             BufferUsage::all(),
+            false,
             info.mats.clone().iter().cloned(),
         )
         .unwrap();
 
         let descriptor_set1 = Arc::new(
-            PersistentDescriptorSet::start(self.pipeline_layout[0].clone(), 0)
-                .add_buffer(camera_uniform)
-                .unwrap()
-                .add_buffer(transforms)
-                .unwrap()
-                .build()
-                .unwrap(),
+            PersistentDescriptorSet::start(
+                self.pipeline_layout[0]
+                    .descriptor_set_layout(0)
+                    .unwrap()
+                    .clone(),
+            )
+            .add_buffer(camera_uniform)
+            .unwrap()
+            .add_buffer(transforms)
+            .unwrap()
+            .build()
+            .unwrap(),
         );
 
         let mut command_buffer =

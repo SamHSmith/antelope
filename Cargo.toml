@@ -7,14 +7,15 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-vulkano = "0.16.0"
-vulkano-win = "0.16.0"
-vulkano-shaders = "0.16.0"
-winit = "0.19"
+vulkano = "0.17.0"
+vulkano-win = "0.17.0"
+vulkano-shaders = "0.17.0"
+winit = "0.21"
 image = "0.21"
 cgmath = "0.17.0"
 conbox = "0.1.0"
 queues = "1.0.0"
+lazy_static = "1.4.0"
 
 [dependencies.gltf]
 version = "0.15"
