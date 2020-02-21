@@ -16,6 +16,7 @@ cgmath = "0.17.0"
 conbox = "0.1.0"
 queues = "1.0.0"
 lazy_static = "1.4.0"
+rusty-fork = "0.2.1"
 
 [dependencies.gltf]
 version = "0.15"
