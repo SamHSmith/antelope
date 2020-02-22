@@ -135,8 +135,32 @@ mod tests {
 
     fn fullscreen_triangle2() {
         let win = crate::window::main_loop::<DemoTriangleRenderer>();
+        //std::thread::sleep(Duration::new(2, 0));
+        //win.stop();
+
         std::thread::sleep(Duration::new(2, 0));
+
+        win.get_window_ref().set_decorations(false);
+
+        std::thread::sleep(Duration::new(2, 0));
+
+        win.get_window_ref()
+            .set_fullscreen(Some(Fullscreen::Borderless(
+                win.get_window_ref().primary_monitor(),
+            )));
+
+        std::thread::sleep(Duration::new(2, 0));
+
+        win.get_window_ref().set_fullscreen(None);
+
+        std::thread::sleep(Duration::new(2, 0));
+
+        win.get_window_ref().set_decorations(true);
+
+        std::thread::sleep(Duration::new(2, 0));
+
         win.stop();
+
         win.join_thread();
     }
 
