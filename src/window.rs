@@ -249,6 +249,12 @@ where
 
                     *control_flow = ControlFlow::Exit
                 }
+                Event::WindowEvent {
+                    event: WindowEvent::Resized(newsize),
+                    ..
+                } => {
+                    recreate_swapchain = true;
+                }
                 Event::WindowEvent { event, .. } => {
                     win.push_event(event.to_static().unwrap());
                 }
