@@ -103,118 +103,136 @@ mod tests {
     use winit::event::WindowEvent::KeyboardInput;
     use winit::window::Fullscreen;
     rusty_fork_test! {
-        #[test]
+        //#[test]
         fn triangle() {
-            let (_thread, win) = crate::window::main_loop::<DemoTriangleRenderer>();
+            let win = crate::window::main_loop::<DemoTriangleRenderer>();
             std::thread::sleep(Duration::new(2, 0));
             win.stop();
+            win.join_thread();
         }
 
         #[test]
+        fn fullscreen_triangle() {
+            fullscreen_triangle2();
+        }
+
+        //#[test]
         fn double_triangle() {
-            let (_thread, win1) = crate::window::main_loop::<DemoTriangleRenderer>();
-            let (_thread, win2) = crate::window::main_loop::<DemoTriangleRenderer>();
+            let win1 = crate::window::main_loop::<DemoTriangleRenderer>();
+            let win2 = crate::window::main_loop::<DemoTriangleRenderer>();
             std::thread::sleep(Duration::new(4, 0));
             win1.stop();
             win2.stop();
+            win1.join_thread();
+            win2.join_thread();
         }
 
-        #[test]
-        fn mesh() {
-            let (thread, win) = crate::window::main_loop::<MeshRenderer>();
+        //#[test]
+        fn mesh(){
+            mesh2();
+        }
+    }
 
-            let meshinfo = MeshCreateInfo {
-                verticies: vec![
-                    Vertex {
-                        position: [-0.5, -0.9, -0.5],
-                        colour: [1.0, 0.0, 0.0, 1.0],
-                        normal: [1.0, 0.0, 0.0],
-                        tangent: [1.0, 0.0, 0.0, 1.0],
-                        texcoord: [0.0, 0.0],
-                    },
-                    Vertex {
-                        position: [0.0, 0.5, -0.5],
-                        colour: [0.0, 1.0, 0.0, 1.0],
-                        normal: [1.0, 0.0, 0.0],
-                        tangent: [1.0, 0.0, 0.0, 1.0],
-                        texcoord: [0.0, 0.0],
-                    },
-                    Vertex {
-                        position: [0.25, -0.1, -0.5],
-                        colour: [0.0, 0.0, 1.0, 1.0],
-                        normal: [1.0, 0.0, 0.0],
-                        tangent: [1.0, 0.0, 0.0, 1.0],
-                        texcoord: [0.0, 0.0],
-                    },
-                    Vertex {
-                        position: [-1.5, -0.9, -0.9],
-                        colour: [1.0, 1.0, 0.0, 1.0],
-                        normal: [1.0, 1.0, 0.0],
-                        tangent: [1.0, 0.0, 0.0, 1.0],
-                        texcoord: [0.0, 0.0],
-                    },
-                    Vertex {
-                        position: [-1.0, 0.5, -0.9],
-                        colour: [1.0, 1.0, 0.0, 1.0],
-                        normal: [1.0, 1.0, 0.0],
-                        tangent: [1.0, 0.0, 0.0, 1.0],
-                        texcoord: [0.0, 0.0],
-                    },
-                    Vertex {
-                        position: [0.2, -0.1, -0.9],
-                        colour: [1.0, 1.0, 0.0, 1.0],
-                        normal: [1.0, 0.0, 0.0],
-                        tangent: [1.0, 0.0, 0.0, 1.0],
-                        texcoord: [0.0, 0.0],
-                    },
-                ],
-                indicies: vec![0, 1, 2, 3, 4, 5],
-            };
+    fn fullscreen_triangle2() {
+        let win = crate::window::main_loop::<DemoTriangleRenderer>();
+        std::thread::sleep(Duration::new(2, 0));
+        win.stop();
+        win.join_thread();
+    }
 
-            let mesh = win.mesh_factory.create_mesh(meshinfo);
+    fn mesh2() {
+        let win = crate::window::main_loop::<MeshRenderer>();
 
-            let mut cam = RenderCamera::new();
-            cam.position.z = 5.0;
+        let meshinfo = MeshCreateInfo {
+            verticies: vec![
+                Vertex {
+                    position: [-0.5, -0.9, -0.5],
+                    colour: [1.0, 0.0, 0.0, 1.0],
+                    normal: [1.0, 0.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0, 1.0],
+                    texcoord: [0.0, 0.0],
+                },
+                Vertex {
+                    position: [0.0, 0.5, -0.5],
+                    colour: [0.0, 1.0, 0.0, 1.0],
+                    normal: [1.0, 0.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0, 1.0],
+                    texcoord: [0.0, 0.0],
+                },
+                Vertex {
+                    position: [0.25, -0.1, -0.5],
+                    colour: [0.0, 0.0, 1.0, 1.0],
+                    normal: [1.0, 0.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0, 1.0],
+                    texcoord: [0.0, 0.0],
+                },
+                Vertex {
+                    position: [-1.5, -0.9, -0.9],
+                    colour: [1.0, 1.0, 0.0, 1.0],
+                    normal: [1.0, 1.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0, 1.0],
+                    texcoord: [0.0, 0.0],
+                },
+                Vertex {
+                    position: [-1.0, 0.5, -0.9],
+                    colour: [1.0, 1.0, 0.0, 1.0],
+                    normal: [1.0, 1.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0, 1.0],
+                    texcoord: [0.0, 0.0],
+                },
+                Vertex {
+                    position: [0.2, -0.1, -0.9],
+                    colour: [1.0, 1.0, 0.0, 1.0],
+                    normal: [1.0, 0.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0, 1.0],
+                    texcoord: [0.0, 0.0],
+                },
+            ],
+            indicies: vec![0, 1, 2, 3, 4, 5],
+        };
 
-            win.render_info.push(RenderInfo {
-                meshes: vec![mesh.clone(), mesh.clone()],
-                mats: vec![
-                    Matrix4::from_translation(Vector3 {
-                        x: 0.0,
-                        y: 2.0,
-                        z: 0.0,
-                    }),
-                    Matrix4::from_translation(Vector3 {
-                        x: 3.0,
-                        y: 2.0,
-                        z: 0.0,
-                    }),
-                ],
-                camera: cam,
-            });
+        let mesh = win.mesh_factory.create_mesh(meshinfo);
 
-            while !win.should_stop() {
-                for e in win.get_events() {
-                    match e.deref() {
-                        KeyboardInput { input, .. } => {
-                            if input.scancode == 57 && input.state == ElementState::Pressed {
-                                let winref = win.get_window_ref();
-                                if win.get_window_ref().fullscreen().is_some() {
-                                    winref.set_fullscreen(None);
-                                } else {
-                                    winref.set_fullscreen(Some(Fullscreen::Borderless(
-                                        winref.current_monitor(),
-                                    )));
-                                }
+        let mut cam = RenderCamera::new();
+        cam.position.z = 5.0;
+
+        win.render_info.push(RenderInfo {
+            meshes: vec![mesh.clone(), mesh.clone()],
+            mats: vec![
+                Matrix4::from_translation(Vector3 {
+                    x: 0.0,
+                    y: 2.0,
+                    z: 0.0,
+                }),
+                Matrix4::from_translation(Vector3 {
+                    x: 3.0,
+                    y: 2.0,
+                    z: 0.0,
+                }),
+            ],
+            camera: cam,
+        });
+
+        while !win.should_stop() {
+            for e in win.get_events() {
+                match e.deref() {
+                    KeyboardInput { input, .. } => {
+                        if input.scancode == 57 && input.state == ElementState::Pressed {
+                            let winref = win.get_window_ref();
+                            if win.get_window_ref().fullscreen().is_some() {
+                                winref.set_fullscreen(None);
+                            } else {
+                                winref.set_fullscreen(Some(Fullscreen::Borderless(
+                                    winref.current_monitor(),
+                                )));
                             }
                         }
-                        _ => {}
                     }
+                    _ => {}
                 }
             }
-
-            thread.join().ok().unwrap();
         }
+        win.join_thread();
     }
 }
 
@@ -240,6 +258,7 @@ use vulkano::descriptor::PipelineLayoutAbstract;
 use vulkano::format::Format;
 use vulkano::swapchain::Surface;
 
+use std::thread::JoinHandle;
 use vulkano::image::{AttachmentImage, ImageUsage, SwapchainImage};
 use vulkano::instance::QueueFamily;
 use winit::event::WindowEvent;
@@ -254,6 +273,7 @@ pub struct MeshRenderer {
     should_stop: Mutex<bool>,
     surface: Arc<Surface<winit::window::Window>>,
     events: Mutex<Queue<Arc<WindowEvent<'static>>>>,
+    join_handle: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl MeshRenderer {
@@ -538,6 +558,7 @@ void main() {
             should_stop: Mutex::new(false),
             surface,
             events: Mutex::new(Queue::new()),
+            join_handle: Mutex::new(None),
         }
     }
 
@@ -551,6 +572,22 @@ void main() {
 
     fn get_surface_ref(&self) -> &Arc<Surface<winit::window::Window>> {
         &self.surface
+    }
+
+    fn set_join_handle(&self, handle: JoinHandle<()>) {
+        *self.join_handle.lock().unwrap() = Some(handle);
+    }
+
+    fn join_thread(&self) {
+        let mut lock = self.join_handle.lock().unwrap();
+        if !lock.is_some() {
+            let handle = lock.take().unwrap();
+            let res = handle.join();
+            if res.is_ok() {
+                return;
+            }
+        }
+        panic!();
     }
 
     fn push_event(&self, event: WindowEvent<'static>) {

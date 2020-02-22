@@ -43,13 +43,13 @@ lazy_static! {
         Instance::new(None, &vulkano_win::required_extensions(), None).unwrap();
 }
 
-pub fn main_loop<Window: 'static>() -> (JoinHandle<()>, Arc<Window>)
+pub fn main_loop<Window: 'static>() -> Arc<Window>
 where
     Window: crate::window::Window,
 {
     let (tx, rx) = mpsc::channel::<Arc<Window>>();
 
-    let thread = std::thread::spawn(move || {
+    let thread: JoinHandle<()> = std::thread::spawn(move || {
         let events_loop = EventLoop::new_any_thread();
 
         let surface = WindowBuilder::new()
@@ -395,7 +395,8 @@ where
     });
 
     let windowref = rx.recv().unwrap();
-    (thread, windowref)
+    windowref.set_join_handle(thread);
+    windowref
 }
 
 pub trait Frame {
@@ -419,6 +420,13 @@ pub trait Window: Send + Sync {
     fn get_dynamic_state_ref(&self) -> &Mutex<DynamicState>;
     fn get_render_pass(&self) -> &Mutex<Arc<dyn RenderPassAbstract + Sync + Send>>;
     fn get_surface_ref(&self) -> &Arc<Surface<winit::window::Window>>;
+
+    /*
+    Sets the join handle for the window thread.
+    For users of the library, implement this with a mutex and dont set this, only get.
+    */
+    fn set_join_handle(&self, handle: JoinHandle<()>);
+    fn join_thread(&self);
 
     fn get_window_ref(&self) -> &winit::window::Window {
         self.get_surface_ref().window()
@@ -460,6 +468,7 @@ pub struct DemoTriangleRenderer {
     dynamic_state: Mutex<DynamicState>,
     should_stop: Mutex<bool>,
     surface: Arc<Surface<winit::window::Window>>,
+    join_handle: Mutex<Option<JoinHandle<()>>>,
 }
 
 pub struct TriangleFrame {
@@ -607,6 +616,7 @@ void main() {
             dynamic_state: Mutex::new(dynamic_state),
             should_stop: Mutex::new(false),
             surface,
+            join_handle: Mutex::new(None),
         }
     }
     fn get_dynamic_state_ref(&self) -> &Mutex<DynamicState> {
@@ -619,6 +629,27 @@ void main() {
 
     fn get_surface_ref(&self) -> &Arc<Surface<winit::window::Window>> {
         &self.surface
+    }
+    /*
+    Sets the join handle for the window thread.
+
+    For users of the library, implement this with a mutex and dont set this, only get.
+    */
+    fn set_join_handle(&self, handle: JoinHandle<()>) {
+        *self.join_handle.lock().unwrap() = Some(handle);
+    }
+
+    fn join_thread(&self) {
+        let mut lock = self.join_handle.lock().unwrap();
+        if lock.is_some() {
+            let handle = lock.take().unwrap();
+            let res = handle.join();
+            if res.is_ok() {
+                return;
+            }
+            panic!("ERROR, cant join thread. RESULT: {:?}", res.err().unwrap());
+        }
+        panic!("This window has no join handle. Handle: {:?}", lock);
     }
 
     fn stop(&self) {
