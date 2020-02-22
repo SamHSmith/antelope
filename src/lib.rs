@@ -111,6 +111,15 @@ mod tests {
         }
 
         #[test]
+        fn double_triangle() {
+            let (_thread, win1) = crate::window::main_loop::<DemoTriangleRenderer>();
+            let (_thread, win2) = crate::window::main_loop::<DemoTriangleRenderer>();
+            std::thread::sleep(Duration::new(4, 0));
+            win1.stop();
+            win2.stop();
+        }
+
+        #[test]
         fn mesh() {
             let (thread, win) = crate::window::main_loop::<MeshRenderer>();
 
