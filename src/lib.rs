@@ -45,6 +45,7 @@ mod tests {
         let buf = CpuAccessibleBuffer::from_iter(
             device.clone(),
             BufferUsage::all(),
+            false,
             (0..1024 * 1024 * 4).map(|_| 0u8),
         )
         .expect("failed to create buffer");
@@ -491,7 +492,7 @@ void main() {
         fn create_framebuffers(
             &self,
             device: &Arc<Device>,
-            images: &[Arc<SwapchainImage<winit::Window>>],
+            images: &[Arc<SwapchainImage<()>>],
         ) -> Vec<MeshFrame> {
             let dimensions = images[0].dimensions();
 
@@ -589,6 +590,7 @@ void main() {
             let post_area = CpuAccessibleBuffer::from_iter(
                 device.clone(),
                 BufferUsage::all(),
+                false,
                 [
                     PostVertex { pos: [-1.0, -1.0] },
                     PostVertex { pos: [1.0, -1.0] },
@@ -603,7 +605,7 @@ void main() {
             .unwrap();
 
             let descriptor_set2 =
-                PersistentDescriptorSet::start(self.pipeline_layout[1].clone(), 0)
+                PersistentDescriptorSet::start(self.pipeline_layout[1].descriptor_set_layout(0).unwrap().clone())
                     .add_image(framebuffer.albedobuffer.clone())
                     .unwrap()
                     .add_image(framebuffer.normalbuffer.clone())
@@ -616,6 +618,7 @@ void main() {
             let camera_uniform = CpuAccessibleBuffer::from_iter(
                 device.clone(),
                 BufferUsage::all(),
+                false,
                 [cam.to_matrix()].iter().cloned(),
             )
             .unwrap();
@@ -625,12 +628,13 @@ void main() {
                 //a good indication of a bug somewhere else in the code.
                 device.clone(),
                 BufferUsage::all(),
+                false,
                 info.mats.clone().iter().cloned(),
             )
             .unwrap();
 
             let descriptor_set1 = Arc::new(
-                PersistentDescriptorSet::start(self.pipeline_layout[0].clone(), 0)
+                PersistentDescriptorSet::start(self.pipeline_layout[0].descriptor_set_layout(0).unwrap().clone())
                     .add_buffer(camera_uniform)
                     .unwrap()
                     .add_buffer(transforms)

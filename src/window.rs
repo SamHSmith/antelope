@@ -13,10 +13,6 @@ use vulkano::swapchain::{
 use vulkano::sync;
 use vulkano::sync::{FlushError, GpuFuture};
 
-use vulkano_win::VkSurfaceBuild;
-
-use winit::{Event, EventsLoop, WindowBuilder, WindowEvent};
-
 use std::borrow::Borrow;
 use std::clone::Clone;
 
@@ -37,18 +33,17 @@ where
     let (tx, rx) = mpsc::channel::<Arc<Window>>();
 
     let thread = std::thread::spawn(move || {
-        // The first step of any Vulkan program is to create an instance.
-        let instance = {
-            // When we create an instance, we have to pass a list of extensions that we want to enable.
-            //
-            // All the window-drawing functionalities are part of non-core extensions that we need
-            // to enable manually. To do so, we ask the `vulkano_win` crate for the list of extensions
-            // required to draw to a window.
-            let extensions = vulkano_win::required_extensions();
 
-            // Now creating the instance.
-            Instance::new(None, &extensions, None).unwrap()
-        };
+        let mut cv = crossvulkan::init();
+
+        let mut glfw= &mut cv.glfw;
+
+        glfw.window_hint(glfw::WindowHint::ClientApi(glfw::ClientApiHint::NoApi));
+        let (mut window, events) = glfw
+            .create_window(300, 300, "Hello this is window", glfw::WindowMode::Windowed)
+            .expect("Failed to create GLFW window.");
+
+        let instance=cv.vulkano_instance;
 
         // We then choose which physical device to use.
         //
@@ -83,11 +78,12 @@ where
         //
         // This returns a `vulkano::swapchain::Surface` object that contains both a cross-platform winit
         // window and a cross-platform Vulkan surface that represents the surface of the window.
-        let mut events_loop = EventsLoop::new();
-        let surface = WindowBuilder::new()
-            .build_vk_surface(&events_loop, instance.clone())
-            .unwrap();
-        let window = surface.window();
+        let mut vksurf: vk_sys::SurfaceKHR = 0;
+
+        assert_eq!(window.create_window_surface(cv.instance,std::ptr::null(),&mut vksurf),vk_sys::SUCCESS);
+
+        let surface =
+            Arc::new(unsafe{vulkano::swapchain::Surface::<()>::from_raw_surface(instance.clone(), vksurf, ())});
 
         // The next step is to choose which GPU queue will execute our draw commands.
         //
@@ -173,15 +169,7 @@ where
             // These drivers will allow anything but the only sensible value is the window dimensions.
             //
             // Because for both of these cases, the swapchain needs to be the window dimensions, we just use that.
-            let initial_dimensions = if let Some(dimensions) = window.get_inner_size() {
-                // convert to physical pixels
-                let dimensions: (u32, u32) =
-                    dimensions.to_physical(window.get_hidpi_factor()).into();
-                [dimensions.0, dimensions.1]
-            } else {
-                // The window no longer exists so exit the application.
-                return;
-            };
+            let dimensions: [u32; 2] = [window.get_size().0 as u32, window.get_size().1 as u32];
 
             // Please take a look at the docs for the meaning of the parameters we didn't mention.
             Swapchain::new(
@@ -189,15 +177,16 @@ where
                 surface.clone(),
                 caps.min_image_count,
                 format,
-                initial_dimensions,
+                dimensions,
                 1,
                 usage,
                 &queue,
                 SurfaceTransform::Identity,
                 alpha,
-                PresentMode::Mailbox, //TODO add custom present modes
+                PresentMode::Fifo, //TODO add custom present modes
+                vulkano::swapchain::FullscreenExclusive::Default,
                 true,
-                None,
+                vulkano::swapchain::ColorSpace::SrgbNonLinear,
             )
             .unwrap()
         };
@@ -244,7 +233,11 @@ where
         let mut totalcounts = 0;
         let mut last_printout = Instant::now();
 
-        loop {
+        let mut running = true;
+
+        while running {
+            glfw.poll_events();
+
             //perf
             let framestart = Instant::now();
 
@@ -258,16 +251,10 @@ where
             // In this example that includes the swapchain, the framebuffers and the dynamic state viewport.
             if recreate_swapchain {
                 // Get the new dimensions of the window.
-                let dimensions = if let Some(dimensions) = window.get_inner_size() {
-                    let dimensions: (u32, u32) =
-                        dimensions.to_physical(window.get_hidpi_factor()).into();
-                    [dimensions.0, dimensions.1]
-                } else {
-                    return;
-                };
+                let dimensions: [u32; 2] = [window.get_size().0 as u32, window.get_size().1 as u32];
 
                 let (new_swapchain, new_images) =
-                    match swapchain.recreate_with_dimension(dimensions) {
+                    match swapchain.recreate_with_dimensions(dimensions) {
                         Ok(r) => r,
                         // This error tends to happen when the user is manually resizing the window.
                         // Simply restarting the loop is the easiest way to fix this issue.
@@ -290,7 +277,7 @@ where
             //
             // This function can block if no image is available. The parameter is an optional timeout
             // after which the function call will return an error.
-            let (image_num, acquire_future) =
+            let (image_num, should_recreate_swapchain, acquire_future) =
                 match swapchain::acquire_next_image(swapchain.clone(), None) {
                     Ok(r) => r,
                     Err(AcquireError::OutOfDate) => {
@@ -299,6 +286,10 @@ where
                     }
                     Err(err) => panic!("{:?}", err),
                 };
+            if(should_recreate_swapchain){
+                recreate_swapchain=true;
+                continue;
+            }
 
             let pre_cmd = win.pre_render_commands(&device, queue_family);
 
@@ -368,24 +359,8 @@ where
 
             // Handling the window events in order to close the program when the user wants to close
             // it.
-            let mut done = false;
-            events_loop.poll_events(|ev| match ev {
-                Event::WindowEvent {
-                    event: WindowEvent::CloseRequested,
-                    ..
-                } => done = true,
-                Event::WindowEvent {
-                    event: WindowEvent::Resized(_),
-                    ..
-                } => recreate_swapchain = true,
-                _ => (),
-            });
-            if win.should_stop() {
-                done = true;
-            }
-
-            if done {
-                return;
+            if window.should_close() ||  win.should_stop() {
+                running= false;
             }
 
             totalcounts += 1;
@@ -433,7 +408,7 @@ where
     fn create_framebuffers(
         &self,
         device: &Arc<Device>,
-        images: &[Arc<SwapchainImage<winit::Window>>],
+        images: &[Arc<SwapchainImage<()>>],
     ) -> Vec<F>;
 
     fn pre_render_commands(
@@ -481,6 +456,7 @@ impl Window<TriangleFrame> for DemoTriangleRenderer {
             CpuAccessibleBuffer::<[TestVertex]>::from_iter(
                 device.clone(),
                 BufferUsage::all(),
+                false,
                 [
                     TestVertex {
                         position: [-0.5, -0.25],
@@ -624,7 +600,7 @@ void main() {
     fn create_framebuffers(
         &self,
         device: &Arc<Device>,
-        images: &[Arc<SwapchainImage<winit::Window>>],
+        images: &[Arc<SwapchainImage<()>>],
     ) -> Vec<TriangleFrame> {
         let dimensions = images[0].dimensions();
 

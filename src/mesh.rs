@@ -85,12 +85,14 @@ impl RawMesh {
         let i = CpuAccessibleBuffer::from_iter(
             device.clone(),
             BufferUsage::transfer_source(),
+            false,
             info.indicies.iter().cloned(),
         )
         .unwrap();
         let v = CpuAccessibleBuffer::from_iter(
             device.clone(),
             BufferUsage::transfer_source(),
+            false,
             info.verticies.iter().cloned(),
         )
         .unwrap();
