@@ -195,7 +195,7 @@ where
                 &queue,
                 SurfaceTransform::Identity,
                 alpha,
-                PresentMode::Immediate, //TODO add custom present modes
+                PresentMode::Mailbox, //TODO add custom present modes
                 true,
                 None,
             )
