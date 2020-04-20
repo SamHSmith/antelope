@@ -1,3 +1,5 @@
+pub use cgmath;
+
 #[cfg(test)]
 mod tests {
     use vulkano::command_buffer::{AutoCommandBuffer, CommandBuffer};
@@ -5,6 +7,12 @@ mod tests {
     use vulkano::format::{ClearValue, Format};
     use vulkano::image::{AttachmentImage, Dimensions, ImageUsage, StorageImage, SwapchainImage};
     use vulkano::instance::{InstanceExtensions, QueueFamily};
+
+    use crate::camera::RenderCamera;
+    use crate::mesh::{Mesh, MeshCreateInfo, MeshFactory, PostVertex, RenderInfo, Vertex};
+    use crate::window::{DemoTriangleRenderer, Frame, TriangleFrame, Window};
+    use crate::MeshFrame;
+    use crate::MeshRenderer;
 
     #[test]
     fn clear_and_export_blue_image() {
@@ -76,9 +84,7 @@ mod tests {
         image.save("test_dump/blue.png").unwrap();
     }
 
-    use crate::camera::RenderCamera;
-    use crate::mesh::{Mesh, MeshCreateInfo, MeshFactory, PostVertex, RenderInfo, Vertex};
-    use crate::window::{DemoTriangleRenderer, Frame, TriangleFrame, Window};
+    
     use cgmath::{Deg, Euler, Matrix4, Quaternion, Vector3};
 
     use std::borrow::Borrow;
@@ -194,113 +200,146 @@ mod tests {
 
         thread.join().ok().unwrap();
     }
+}
 
-    pub struct MeshRenderer {
-        pub render_info: PushData<RenderInfo>,
-        pub mesh_factory: MeshFactory,
-        render_pass: Mutex<Arc<dyn RenderPassAbstract + Sync + Send>>,
-        pipeline: [Arc<dyn GraphicsPipelineAbstract + Sync + Send>; 2],
-        pipeline_layout: [Arc<dyn PipelineLayoutAbstract + Send + Sync>; 2],
-        dynamic_state: Mutex<DynamicState>,
-        should_stop: Mutex<bool>,
+use vulkano::command_buffer::{AutoCommandBuffer, CommandBuffer};
+use vulkano::device::{Features, Queue};
+use vulkano::format::{ClearValue, Format};
+use vulkano::image::{AttachmentImage, Dimensions, ImageUsage, StorageImage, SwapchainImage};
+use vulkano::instance::{InstanceExtensions, QueueFamily};
+
+use crate::camera::RenderCamera;
+use crate::mesh::{Mesh, MeshCreateInfo, MeshFactory, PostVertex, RenderInfo, Vertex};
+use crate::window::{DemoTriangleRenderer, Frame, TriangleFrame, Window};
+use cgmath::{Deg, Euler, Matrix4, Quaternion, Vector3};
+
+use std::borrow::Borrow;
+use std::sync::{Arc, Mutex};
+use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
+
+use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
+use vulkano::device::{Device, DeviceExtensions};
+use vulkano::framebuffer::{FramebufferAbstract, RenderPassAbstract, Subpass};
+
+use vulkano::instance::{Instance, PhysicalDevice};
+
+use vulkano::pipeline::viewport::Viewport;
+use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
+
+use conbox::PushData;
+use std::time::Duration;
+
+use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
+use vulkano::descriptor::PipelineLayoutAbstract;
+use vulkano::sync::GpuFuture;
+
+
+pub struct MeshRenderer {
+    pub render_info: PushData<RenderInfo>,
+    pub mesh_factory: MeshFactory,
+    render_pass: Mutex<Arc<dyn RenderPassAbstract + Sync + Send>>,
+    pipeline: [Arc<dyn GraphicsPipelineAbstract + Sync + Send>; 2],
+    pipeline_layout: [Arc<dyn PipelineLayoutAbstract + Send + Sync>; 2],
+    dynamic_state: Mutex<DynamicState>,
+    should_stop: Mutex<bool>,
+}
+
+pub struct MeshFrame {
+    framebuffer: Arc<dyn FramebufferAbstract + Send + Sync>,
+    albedobuffer: Arc<AttachmentImage>,
+    normalbuffer: Arc<AttachmentImage>,
+    depthbuffer: Arc<AttachmentImage>,
+}
+
+impl Frame for MeshFrame {
+    fn get_framebuffer(&self) -> &Arc<dyn FramebufferAbstract + Send + Sync> {
+        &self.framebuffer
+    }
+}
+
+impl Window<MeshFrame> for MeshRenderer {
+    fn get_device_extensions(extensions: &mut DeviceExtensions) {
+        extensions.khr_storage_buffer_storage_class = true;
     }
 
-    struct MeshFrame {
-        framebuffer: Arc<dyn FramebufferAbstract + Send + Sync>,
-        albedobuffer: Arc<AttachmentImage>,
-        normalbuffer: Arc<AttachmentImage>,
-        depthbuffer: Arc<AttachmentImage>,
-    }
-
-    impl Frame for MeshFrame {
-        fn get_framebuffer(&self) -> &Arc<dyn FramebufferAbstract + Send + Sync> {
-            &self.framebuffer
-        }
-    }
-
-    impl Window<MeshFrame> for MeshRenderer {
-        fn get_device_extensions(extensions: &mut DeviceExtensions) {
-            extensions.khr_storage_buffer_storage_class = true;
-        }
-
-        fn setup(
-            device: &Arc<Device>,
-            swapchain_format: vulkano::format::Format,
-            graphics_family: QueueFamily,
-            graphics_queue: &Arc<Queue>,
-        ) -> Self {
-            let render_pass = Arc::new(
-                vulkano::ordered_passes_renderpass!(
-                    device.clone(),
-                    attachments: {
-                        // `color` is a custom name we give to the first and only attachment.
-                        color: {
-                            // `load: Clear` means that we ask the GPU to clear the content of this
-                            // attachment at the start of the drawing.
-                            load: Clear,
-                            // `store: Store` means that we ask the GPU to store the output of the draw
-                            // in the actual image. We could also ask it to discard the result.
-                            store: Store,
-                            // `format: <ty>` indicates the type of the format of the image. This has to
-                            // be one of the types of the `vulkano::format` module (or alternatively one
-                            // of your structs that implements the `FormatDesc` trait). Here we use the
-                            // same format as the swapchain.
-                            format: swapchain_format,
-                            samples: 1,
-                        },
-                        depth: {
-                            load: Clear,
-                            store: Store,
-                            format: Format::D32Sfloat,
-                            samples: 1,
-                        },
-                        albedo: {
-                            // `load: Clear` means that we ask the GPU to clear the content of this
-                            // attachment at the start of the drawing.
-                            load: Clear,
-                            // `store: Store` means that we ask the GPU to store the output of the draw
-                            // in the actual image. We could also ask it to discard the result.
-                            store: Store,
-                            // `format: <ty>` indicates the type of the format of the image. This has to
-                            // be one of the types of the `vulkano::format` module (or alternatively one
-                            // of your structs that implements the `FormatDesc` trait). Here we use the
-                            // same format as the swapchain.
-                            format: Format::R32G32B32A32Sfloat,
-                            samples: 1,
-                        },
-                        normals: {
-                            load: Clear,
-                            store: Store,
-                            format: Format::R16G16B16A16Sfloat,
-                            samples: 1,
-                        }
+    fn setup(
+        device: &Arc<Device>,
+        swapchain_format: vulkano::format::Format,
+        graphics_family: QueueFamily,
+        graphics_queue: &Arc<Queue>,
+    ) -> Self {
+        let render_pass = Arc::new(
+            vulkano::ordered_passes_renderpass!(
+                device.clone(),
+                attachments: {
+                    // `color` is a custom name we give to the first and only attachment.
+                    color: {
+                        // `load: Clear` means that we ask the GPU to clear the content of this
+                        // attachment at the start of the drawing.
+                        load: Clear,
+                        // `store: Store` means that we ask the GPU to store the output of the draw
+                        // in the actual image. We could also ask it to discard the result.
+                        store: Store,
+                        // `format: <ty>` indicates the type of the format of the image. This has to
+                        // be one of the types of the `vulkano::format` module (or alternatively one
+                        // of your structs that implements the `FormatDesc` trait). Here we use the
+                        // same format as the swapchain.
+                        format: swapchain_format,
+                        samples: 1,
                     },
-                    passes: [
-                    {
-                        // We use the attachment named `color` as the one and only color attachment.
-                        color: [albedo,normals],
-                        // No depth-stencil attachment is indicated with empty brackets.
-                        depth_stencil: {depth},
-                        input: []
+                    depth: {
+                        load: Clear,
+                        store: Store,
+                        format: Format::D32Sfloat,
+                        samples: 1,
                     },
-                    {
-                        // We use the attachment named `color` as the one and only color attachment.
-                        color: [color],
-                        // No depth-stencil attachment is indicated with empty brackets.
-                        depth_stencil: {},
-                        input: [albedo,normals,depth]
+                    albedo: {
+                        // `load: Clear` means that we ask the GPU to clear the content of this
+                        // attachment at the start of the drawing.
+                        load: Clear,
+                        // `store: Store` means that we ask the GPU to store the output of the draw
+                        // in the actual image. We could also ask it to discard the result.
+                        store: Store,
+                        // `format: <ty>` indicates the type of the format of the image. This has to
+                        // be one of the types of the `vulkano::format` module (or alternatively one
+                        // of your structs that implements the `FormatDesc` trait). Here we use the
+                        // same format as the swapchain.
+                        format: Format::R32G32B32A32Sfloat,
+                        samples: 1,
+                    },
+                    normals: {
+                        load: Clear,
+                        store: Store,
+                        format: Format::R16G16B16A16Sfloat,
+                        samples: 1,
                     }
-                    ]
-                )
-                .unwrap(),
-            );
+                },
+                passes: [
+                {
+                    // We use the attachment named `color` as the one and only color attachment.
+                    color: [albedo,normals],
+                    // No depth-stencil attachment is indicated with empty brackets.
+                    depth_stencil: {depth},
+                    input: []
+                },
+                {
+                    // We use the attachment named `color` as the one and only color attachment.
+                    color: [color],
+                    // No depth-stencil attachment is indicated with empty brackets.
+                    depth_stencil: {},
+                    input: [albedo,normals,depth]
+                }
+                ]
+            )
+            .unwrap(),
+        );
 
-            vulkano::impl_vertex!(Vertex, position, colour, normal, tangent, texcoord);
+        vulkano::impl_vertex!(Vertex, position, colour, normal, tangent, texcoord);
 
-            mod vs {
-                vulkano_shaders::shader! {
-                    ty: "vertex",
-                    src: "
+        mod vs {
+            vulkano_shaders::shader! {
+                ty: "vertex",
+                src: "
 #version 450
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec3 colour;
@@ -335,13 +374,13 @@ void main() {
     frag_tangent=tangent;
     frag_texcoord=texcoord;
 }"
-                }
             }
+        }
 
-            mod fs {
-                vulkano_shaders::shader! {
-                    ty: "fragment",
-                    src: "
+        mod fs {
+            vulkano_shaders::shader! {
+                ty: "fragment",
+                src: "
 #version 450
 layout(location = 0) in vec3 colour;
 layout(location = 1) in vec3 normal;
@@ -356,56 +395,56 @@ void main() {
     f_normal = vec4(normal, 0.0);
 }
 "
-                }
             }
+        }
 
-            let vs = vs::Shader::load(device.clone()).unwrap();
-            let fs = fs::Shader::load(device.clone()).unwrap();
+        let vs = vs::Shader::load(device.clone()).unwrap();
+        let fs = fs::Shader::load(device.clone()).unwrap();
 
-            let pipeline1 = Arc::new(
-                GraphicsPipeline::start()
-                    // We need to indicate the layout of the vertices.
-                    // The type `SingleBufferDefinition` actually contains a template parameter corresponding
-                    // to the type of each vertex. But in this code it is automatically inferred.
-                    .vertex_input_single_buffer::<Vertex>()
-                    // A Vulkan shader can in theory contain multiple entry points, so we have to specify
-                    // which one. The `main` word of `main_entry_point` actually corresponds to the name of
-                    // the entry point.
-                    .vertex_shader(vs.main_entry_point(), ())
-                    // The content of the vertex buffer describes a list of triangles.
-                    .triangle_list()
-                    // Use a resizable viewport set to draw over the entire window
-                    .viewports_dynamic_scissors_irrelevant(1)
-                    // See `vertex_shader`.
-                    .fragment_shader(fs.main_entry_point(), ())
-                    // We have to indicate which subpass of which render pass this pipeline is going to be used
-                    // in. The pipeline will only be usable from this particular subpass.
-                    .depth_stencil_simple_depth()
-                    .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
-                    // Now that our builder is filled, we call `build()` to obtain an actual pipeline.
-                    .build(device.clone())
-                    .unwrap(),
-            );
+        let pipeline1 = Arc::new(
+            GraphicsPipeline::start()
+                // We need to indicate the layout of the vertices.
+                // The type `SingleBufferDefinition` actually contains a template parameter corresponding
+                // to the type of each vertex. But in this code it is automatically inferred.
+                .vertex_input_single_buffer::<Vertex>()
+                // A Vulkan shader can in theory contain multiple entry points, so we have to specify
+                // which one. The `main` word of `main_entry_point` actually corresponds to the name of
+                // the entry point.
+                .vertex_shader(vs.main_entry_point(), ())
+                // The content of the vertex buffer describes a list of triangles.
+                .triangle_list()
+                // Use a resizable viewport set to draw over the entire window
+                .viewports_dynamic_scissors_irrelevant(1)
+                // See `vertex_shader`.
+                .fragment_shader(fs.main_entry_point(), ())
+                // We have to indicate which subpass of which render pass this pipeline is going to be used
+                // in. The pipeline will only be usable from this particular subpass.
+                .depth_stencil_simple_depth()
+                .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
+                // Now that our builder is filled, we call `build()` to obtain an actual pipeline.
+                .build(device.clone())
+                .unwrap(),
+        );
 
-            vulkano::impl_vertex!(PostVertex, pos);
+        vulkano::impl_vertex!(PostVertex, pos);
 
-            mod vs2 {
-                vulkano_shaders::shader! {
-                    ty: "vertex",
-                    src: "
+        mod vs2 {
+            vulkano_shaders::shader! {
+                ty: "vertex",
+                src: "
 #version 450
 layout(location = 0) in vec2 pos;
 
 void main() {
     gl_Position = vec4(pos,0.0,1.0);
 }"
-                }
             }
+        }
 
-            mod fs2 {
-                vulkano_shaders::shader! {
-                    ty: "fragment",
-                    src: "
+        mod fs2 {
+            vulkano_shaders::shader! {
+                ty: "fragment",
+                src: "
 #version 450
 
 layout(input_attachment_index = 0, set = 0, binding = 0) uniform subpassInput u_diffuse;
@@ -421,279 +460,287 @@ void main() {
     f_colour = vec4(subpassLoad(u_normal).xyz, 1.0);
 }
 "
-                }
-            }
-
-            let vs2 = vs2::Shader::load(device.clone()).unwrap();
-            let fs2 = fs2::Shader::load(device.clone()).unwrap();
-
-            let pipeline2 = Arc::new(
-                GraphicsPipeline::start()
-                    // We need to indicate the layout of the vertices.
-                    // The type `SingleBufferDefinition` actually contains a template parameter corresponding
-                    // to the type of each vertex. But in this code it is automatically inferred.
-                    .vertex_input_single_buffer::<PostVertex>()
-                    // A Vulkan shader can in theory contain multiple entry points, so we have to specify
-                    // which one. The `main` word of `main_entry_point` actually corresponds to the name of
-                    // the entry point.
-                    .vertex_shader(vs2.main_entry_point(), ())
-                    // The content of the vertex buffer describes a list of triangles.
-                    .triangle_list()
-                    // Use a resizable viewport set to draw over the entire window
-                    .viewports_dynamic_scissors_irrelevant(1)
-                    // See `vertex_shader`.
-                    .fragment_shader(fs2.main_entry_point(), ())
-                    // We have to indicate which subpass of which render pass this pipeline is going to be used
-                    // in. The pipeline will only be usable from this particular subpass.
-                    //.depth_stencil_simple_depth()
-                    .render_pass(Subpass::from(render_pass.clone(), 1).unwrap())
-                    // Now that our builder is filled, we call `build()` to obtain an actual pipeline.
-                    .build(device.clone())
-                    .unwrap(),
-            );
-
-            let dynamic_state = DynamicState {
-                line_width: None,
-                viewports: None,
-                scissors: None,
-                compare_mask: None,
-                write_mask: None,
-                reference: None,
-            };
-
-            MeshRenderer {
-                render_info: PushData::new(RenderInfo::empty()),
-                mesh_factory: MeshFactory::new(),
-                render_pass: Mutex::new(render_pass),
-                pipeline: [pipeline1.clone(), pipeline2.clone()],
-                pipeline_layout: [pipeline1.clone(), pipeline2.clone()],
-                dynamic_state: Mutex::new(dynamic_state),
-                should_stop: Mutex::new(false),
             }
         }
 
-        fn get_dynamic_state_ref(&self) -> &Mutex<DynamicState> {
-            self.dynamic_state.borrow()
+        let vs2 = vs2::Shader::load(device.clone()).unwrap();
+        let fs2 = fs2::Shader::load(device.clone()).unwrap();
+
+        let pipeline2 = Arc::new(
+            GraphicsPipeline::start()
+                // We need to indicate the layout of the vertices.
+                // The type `SingleBufferDefinition` actually contains a template parameter corresponding
+                // to the type of each vertex. But in this code it is automatically inferred.
+                .vertex_input_single_buffer::<PostVertex>()
+                // A Vulkan shader can in theory contain multiple entry points, so we have to specify
+                // which one. The `main` word of `main_entry_point` actually corresponds to the name of
+                // the entry point.
+                .vertex_shader(vs2.main_entry_point(), ())
+                // The content of the vertex buffer describes a list of triangles.
+                .triangle_list()
+                // Use a resizable viewport set to draw over the entire window
+                .viewports_dynamic_scissors_irrelevant(1)
+                // See `vertex_shader`.
+                .fragment_shader(fs2.main_entry_point(), ())
+                // We have to indicate which subpass of which render pass this pipeline is going to be used
+                // in. The pipeline will only be usable from this particular subpass.
+                //.depth_stencil_simple_depth()
+                .render_pass(Subpass::from(render_pass.clone(), 1).unwrap())
+                // Now that our builder is filled, we call `build()` to obtain an actual pipeline.
+                .build(device.clone())
+                .unwrap(),
+        );
+
+        let dynamic_state = DynamicState {
+            line_width: None,
+            viewports: None,
+            scissors: None,
+            compare_mask: None,
+            write_mask: None,
+            reference: None,
+        };
+
+        MeshRenderer {
+            render_info: PushData::new(RenderInfo::empty()),
+            mesh_factory: MeshFactory::new(),
+            render_pass: Mutex::new(render_pass),
+            pipeline: [pipeline1.clone(), pipeline2.clone()],
+            pipeline_layout: [pipeline1.clone(), pipeline2.clone()],
+            dynamic_state: Mutex::new(dynamic_state),
+            should_stop: Mutex::new(false),
         }
+    }
 
-        fn get_render_pass(&self) -> &Mutex<Arc<dyn RenderPassAbstract + Sync + Send>> {
-            self.render_pass.borrow()
-        }
+    fn get_dynamic_state_ref(&self) -> &Mutex<DynamicState> {
+        self.dynamic_state.borrow()
+    }
 
-        fn stop(&self) {
-            let mut data = self.should_stop.lock().unwrap();
-            *data = true;
-        }
+    fn get_render_pass(&self) -> &Mutex<Arc<dyn RenderPassAbstract + Sync + Send>> {
+        self.render_pass.borrow()
+    }
 
-        fn should_stop(&self) -> bool {
-            *self.should_stop.lock().unwrap()
-        }
+    fn stop(&self) {
+        let mut data = self.should_stop.lock().unwrap();
+        *data = true;
+    }
 
-        fn create_framebuffers(
-            &self,
-            device: &Arc<Device>,
-            images: &[Arc<SwapchainImage<()>>],
-        ) -> Vec<MeshFrame> {
-            let dimensions = images[0].dimensions();
+    fn should_stop(&self) -> bool {
+        *self.should_stop.lock().unwrap()
+    }
 
-            let viewport = Viewport {
-                origin: [0.0, 0.0],
-                dimensions: [dimensions[0] as f32, dimensions[1] as f32],
-                depth_range: 0.0..1.0,
-            };
-            self.get_dynamic_state_ref().lock().unwrap().viewports = Some(vec![viewport]);
+    fn create_framebuffers(
+        &self,
+        device: &Arc<Device>,
+        images: &[Arc<SwapchainImage<()>>],
+    ) -> Vec<MeshFrame> {
+        let dimensions = images[0].dimensions();
 
-            let mut usage = ImageUsage::none();
-            usage.input_attachment = true;
-            usage.transient_attachment = true;
+        let viewport = Viewport {
+            origin: [0.0, 0.0],
+            dimensions: [dimensions[0] as f32, dimensions[1] as f32],
+            depth_range: 0.0..1.0,
+        };
+        self.get_dynamic_state_ref().lock().unwrap().viewports = Some(vec![viewport]);
 
-            let albedo_buffer = AttachmentImage::with_usage(
-                device.clone(),
-                dimensions,
-                vulkano::format::Format::R32G32B32A32Sfloat,
-                usage,
-            )
-            .unwrap();
+        let mut usage = ImageUsage::none();
+        usage.input_attachment = true;
+        usage.transient_attachment = true;
 
-            let normal_buffer = AttachmentImage::with_usage(
-                device.clone(),
-                dimensions,
-                vulkano::format::Format::R16G16B16A16Sfloat,
-                usage,
-            )
-            .unwrap();
+        let albedo_buffer = AttachmentImage::with_usage(
+            device.clone(),
+            dimensions,
+            vulkano::format::Format::R32G32B32A32Sfloat,
+            usage,
+        )
+        .unwrap();
 
-            let depth_buffer = AttachmentImage::with_usage(
-                device.clone(),
-                dimensions,
-                vulkano::format::Format::D32Sfloat,
-                usage,
-            )
-            .unwrap();
+        let normal_buffer = AttachmentImage::with_usage(
+            device.clone(),
+            dimensions,
+            vulkano::format::Format::R16G16B16A16Sfloat,
+            usage,
+        )
+        .unwrap();
 
-            images
-                .iter()
-                .map(|image| MeshFrame {
-                    framebuffer: Arc::new(
-                        vulkano::framebuffer::Framebuffer::start(
-                            self.get_render_pass().lock().unwrap().clone(),
-                        )
-                        .add(image.clone())
-                        .unwrap()
-                        .add(depth_buffer.clone())
-                        .unwrap()
-                        .add(albedo_buffer.clone())
-                        .unwrap()
-                        .add(normal_buffer.clone())
-                        .unwrap()
-                        .build()
-                        .unwrap(),
-                    ),
-                    albedobuffer: albedo_buffer.clone(),
-                    normalbuffer: normal_buffer.clone(),
-                    depthbuffer: depth_buffer.clone(),
-                })
-                .collect::<Vec<_>>()
-        }
+        let depth_buffer = AttachmentImage::with_usage(
+            device.clone(),
+            dimensions,
+            vulkano::format::Format::D32Sfloat,
+            usage,
+        )
+        .unwrap();
 
-        fn pre_render_commands(
-            &self,
-            device: &Arc<Device>,
-            queue_family: QueueFamily,
-        ) -> Option<AutoCommandBuffer> {
-            Some(
-                self.mesh_factory
-                    .perform_mesh_creation(&device, queue_family),
-            )
-        }
-
-        fn render(
-            &self,
-            device: &Arc<Device>,
-            queue_family: QueueFamily,
-            framebuffer: &MeshFrame,
-        ) -> AutoCommandBuffer {
-            let info = self.render_info.get();
-
-            // We now create a buffer that will store the shape of our triangle.
-
-            // Specify the color to clear the framebuffer with i.e. blue
-            let clear_values = vec![
-                [0.0, 0.0, 0.2, 1.0].into(),
-                1f32.into(),
-                [0.0, 0.0, 0.0, 0.0].into(),
-                [0.0, 0.0, 0.0, 0.0].into(),
-            ];
-
-            let cam = info.camera.clone();
-
-            let post_area = CpuAccessibleBuffer::from_iter(
-                device.clone(),
-                BufferUsage::all(),
-                false,
-                [
-                    PostVertex { pos: [-1.0, -1.0] },
-                    PostVertex { pos: [1.0, -1.0] },
-                    PostVertex { pos: [-1.0, 1.0] },
-                    PostVertex { pos: [-1.0, 1.0] },
-                    PostVertex { pos: [1.0, -1.0] },
-                    PostVertex { pos: [1.0, 1.0] },
-                ]
-                .iter()
-                .cloned(),
-            )
-            .unwrap();
-
-            let descriptor_set2 =
-                PersistentDescriptorSet::start(self.pipeline_layout[1].descriptor_set_layout(0).unwrap().clone())
-                    .add_image(framebuffer.albedobuffer.clone())
-                    .unwrap()
-                    .add_image(framebuffer.normalbuffer.clone())
-                    .unwrap()
-                    .add_image(framebuffer.depthbuffer.clone())
-                    .unwrap()
-                    .build()
-                    .unwrap();
-
-            let camera_uniform = CpuAccessibleBuffer::from_iter(
-                device.clone(),
-                BufferUsage::all(),
-                false,
-                [cam.to_matrix()].iter().cloned(),
-            )
-            .unwrap();
-
-            debug_assert_eq!(info.mats.len(), info.meshes.len()); //The code will still render if the assert fails. But this
-            let transforms = CpuAccessibleBuffer::from_iter(
-                //a good indication of a bug somewhere else in the code.
-                device.clone(),
-                BufferUsage::all(),
-                false,
-                info.mats.clone().iter().cloned(),
-            )
-            .unwrap();
-
-            let descriptor_set1 = Arc::new(
-                PersistentDescriptorSet::start(self.pipeline_layout[0].descriptor_set_layout(0).unwrap().clone())
-                    .add_buffer(camera_uniform)
-                    .unwrap()
-                    .add_buffer(transforms)
-                    .unwrap()
-                    .build()
-                    .unwrap(),
-            );
-
-            let mut command_buffer =
-                AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue_family)
-                    .unwrap();
-
-            // Before we can draw, we have to *enter a render pass*. There are two methods to do
-            // this: `draw_inline` and `draw_secondary`. The latter is a bit more advanced and is
-            // not covered here.
-            //
-            // The third parameter builds the list of values to clear the attachments with. The API
-            // is similar to the list of attachments when building the framebuffers, except that
-            // only the attachments that use `load: Clear` appear in the list.
-            command_buffer = command_buffer
-                .begin_render_pass(framebuffer.framebuffer.clone(), false, clear_values)
-                .unwrap();
-
-            for i in 0..info.meshes.len() {
-                let mesh = info.meshes[i].get_raw();
-                if mesh.is_none() {
-                    println!("NAN");
-                    continue;
-                }
-                let meshraw = mesh.unwrap();
-
-                command_buffer = command_buffer
-                    .draw_indexed(
-                        self.pipeline[0].clone(),
-                        &self.dynamic_state.lock().unwrap(),
-                        vec![meshraw.vertbuff.clone()],
-                        meshraw.indbuff.clone(),
-                        descriptor_set1.clone(),
-                        i,
+        images
+            .iter()
+            .map(|image| MeshFrame {
+                framebuffer: Arc::new(
+                    vulkano::framebuffer::Framebuffer::start(
+                        self.get_render_pass().lock().unwrap().clone(),
                     )
-                    .unwrap();
-            }
+                    .add(image.clone())
+                    .unwrap()
+                    .add(depth_buffer.clone())
+                    .unwrap()
+                    .add(albedo_buffer.clone())
+                    .unwrap()
+                    .add(normal_buffer.clone())
+                    .unwrap()
+                    .build()
+                    .unwrap(),
+                ),
+                albedobuffer: albedo_buffer.clone(),
+                normalbuffer: normal_buffer.clone(),
+                depthbuffer: depth_buffer.clone(),
+            })
+            .collect::<Vec<_>>()
+    }
 
-            command_buffer = command_buffer
-                .next_subpass(false)
+    fn pre_render_commands(
+        &self,
+        device: &Arc<Device>,
+        queue_family: QueueFamily,
+    ) -> Option<AutoCommandBuffer> {
+        Some(
+            self.mesh_factory
+                .perform_mesh_creation(&device, queue_family),
+        )
+    }
+
+    fn render(
+        &self,
+        device: &Arc<Device>,
+        queue_family: QueueFamily,
+        framebuffer: &MeshFrame,
+    ) -> AutoCommandBuffer {
+        let info = self.render_info.get();
+
+        // We now create a buffer that will store the shape of our triangle.
+
+        // Specify the color to clear the framebuffer with i.e. blue
+        let clear_values = vec![
+            [0.0, 0.0, 0.2, 1.0].into(),
+            1f32.into(),
+            [0.0, 0.0, 0.0, 0.0].into(),
+            [0.0, 0.0, 0.0, 0.0].into(),
+        ];
+
+        let cam = info.camera.clone();
+
+        let post_area = CpuAccessibleBuffer::from_iter(
+            device.clone(),
+            BufferUsage::all(),
+            false,
+            [
+                PostVertex { pos: [-1.0, -1.0] },
+                PostVertex { pos: [1.0, -1.0] },
+                PostVertex { pos: [-1.0, 1.0] },
+                PostVertex { pos: [-1.0, 1.0] },
+                PostVertex { pos: [1.0, -1.0] },
+                PostVertex { pos: [1.0, 1.0] },
+            ]
+            .iter()
+            .cloned(),
+        )
+        .unwrap();
+
+        let descriptor_set2 = PersistentDescriptorSet::start(
+            self.pipeline_layout[1]
+                .descriptor_set_layout(0)
                 .unwrap()
-                .draw(
-                    self.pipeline[1].clone(),
-                    &self.dynamic_state.lock().unwrap(),
-                    vec![post_area.clone()],
-                    descriptor_set2,
-                    (),
-                )
-                .unwrap()
-                .end_render_pass()
+                .clone(),
+        )
+        .add_image(framebuffer.albedobuffer.clone())
+        .unwrap()
+        .add_image(framebuffer.normalbuffer.clone())
+        .unwrap()
+        .add_image(framebuffer.depthbuffer.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+
+        let camera_uniform = CpuAccessibleBuffer::from_iter(
+            device.clone(),
+            BufferUsage::all(),
+            false,
+            [cam.to_matrix()].iter().cloned(),
+        )
+        .unwrap();
+
+        debug_assert_eq!(info.mats.len(), info.meshes.len()); //The code will still render if the assert fails. But this
+        let transforms = CpuAccessibleBuffer::from_iter(
+            //a good indication of a bug somewhere else in the code.
+            device.clone(),
+            BufferUsage::all(),
+            false,
+            info.mats.clone().iter().cloned(),
+        )
+        .unwrap();
+
+        let descriptor_set1 = Arc::new(
+            PersistentDescriptorSet::start(
+                self.pipeline_layout[0]
+                    .descriptor_set_layout(0)
+                    .unwrap()
+                    .clone(),
+            )
+            .add_buffer(camera_uniform)
+            .unwrap()
+            .add_buffer(transforms)
+            .unwrap()
+            .build()
+            .unwrap(),
+        );
+
+        let mut command_buffer =
+            AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue_family)
                 .unwrap();
 
-            command_buffer.build().unwrap()
+        // Before we can draw, we have to *enter a render pass*. There are two methods to do
+        // this: `draw_inline` and `draw_secondary`. The latter is a bit more advanced and is
+        // not covered here.
+        //
+        // The third parameter builds the list of values to clear the attachments with. The API
+        // is similar to the list of attachments when building the framebuffers, except that
+        // only the attachments that use `load: Clear` appear in the list.
+        command_buffer = command_buffer
+            .begin_render_pass(framebuffer.framebuffer.clone(), false, clear_values)
+            .unwrap();
+
+        for i in 0..info.meshes.len() {
+            let mesh = info.meshes[i].get_raw();
+            if mesh.is_none() {
+                println!("NAN");
+                continue;
+            }
+            let meshraw = mesh.unwrap();
+
+            command_buffer = command_buffer
+                .draw_indexed(
+                    self.pipeline[0].clone(),
+                    &self.dynamic_state.lock().unwrap(),
+                    vec![meshraw.vertbuff.clone()],
+                    meshraw.indbuff.clone(),
+                    descriptor_set1.clone(),
+                    i,
+                )
+                .unwrap();
         }
+
+        command_buffer = command_buffer
+            .next_subpass(false)
+            .unwrap()
+            .draw(
+                self.pipeline[1].clone(),
+                &self.dynamic_state.lock().unwrap(),
+                vec![post_area.clone()],
+                descriptor_set2,
+                (),
+            )
+            .unwrap()
+            .end_render_pass()
+            .unwrap();
+
+        command_buffer.build().unwrap()
     }
 }
 
